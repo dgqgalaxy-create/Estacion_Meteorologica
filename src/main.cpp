@@ -370,7 +370,11 @@ void encolarLectura(float t, float h, float p) {
   }
 }
 
-// Envía UNA lectura a Google Sheets; true si el servidor respondió (2xx/3xx).
+// Envía UNA lectura a Google Sheets; true si el servidor respondió 2xx/3xx.
+// IMPORTANTE: Apps Script responde siempre 302 y NO hay que seguir la
+// redirección (eso añade un segundo salto TLS a otro host que en redes
+// débiles se cuelga y bloquea el bucle). El 302 confirma que doPost se
+// ejecutó, así que cualquier 2xx/3xx cuenta como éxito.
 bool enviarLecturaHttp(float t, float h, float p) {
   if (WiFi.status() != WL_CONNECTED) return false;
   String url = obtenerSheetsUrl();
@@ -378,17 +382,17 @@ bool enviarLecturaHttp(float t, float h, float p) {
   HTTPClient http;
   if (!http.begin(url)) return false;
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-  http.setTimeout(10000);
-  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+  http.setTimeout(8000);
+  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
   http.setReuse(false);          // 🔒 Protección contra fugas de sockets a largo plazo
   String postData = "temp=" + String(t, 1) + "&hum=" + String(h, 1) + "&pres=" + String(p, 1);
   int codigo = http.POST(postData);
   http.end();
-  if (codigo <= 0) {
-    Serial.printf("Envio fallido (HTTP %d)\n", codigo);
-    return false;
+  if (codigo >= 200 && codigo < 400) {
+    return true;
   }
-  return true;
+  Serial.printf("Envio fallido (HTTP %d)\n", codigo);
+  return false;
 }
 
 // Reenvía hasta maxPorVez lecturas pendientes (la más antigua primero).
