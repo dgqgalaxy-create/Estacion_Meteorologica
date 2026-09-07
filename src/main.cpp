@@ -12,6 +12,7 @@
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include <esp_task_wdt.h>
+#include <LittleFS.h>
 #include "time.h" 
 #include <WiFiManager.h>
 #include <math.h>
@@ -206,6 +207,112 @@ void actualizarRecords(float t, float h, float p) {
     if (p < presMin) presMin = p;
 }
 
+// --- COLA OFFLINE DE LECTURAS (LittleFS) ---
+// Si el WiFi está caído o el envío falla, las lecturas se guardan aquí y se
+// reenvían automáticamente cuando hay red y el envío está activado.
+#define COLA_ARCHIVO "/cola.csv"
+const int COLA_MAX = 200;
+bool fsListo = false;
+int colaPendiente = 0;
+
+int contarCola() {
+  if (!fsListo) return 0;
+  File f = LittleFS.open(COLA_ARCHIVO, "r");
+  if (!f) return 0;
+  int n = 0;
+  while (f.available()) {
+    String linea = f.readStringUntil('\n');
+    linea.trim();
+    if (linea.length() > 0) n++;
+  }
+  f.close();
+  return n;
+}
+
+bool inicializarFS() {
+  fsListo = LittleFS.begin(true, "/littlefs", 8, "spiffs");
+  if (fsListo) {
+    colaPendiente = contarCola();
+    Serial.printf("LittleFS listo (%d lecturas pendientes)\n", colaPendiente);
+  } else {
+    Serial.println("Fallo al montar LittleFS");
+  }
+  return fsListo;
+}
+
+void encolarLectura(float t, float h, float p) {
+  if (!fsListo) return;
+  if (colaPendiente >= COLA_MAX) {
+    registrarEvento("Cola: llena, se descarta lectura");
+    return;
+  }
+  File f = LittleFS.open(COLA_ARCHIVO, FILE_APPEND);
+  if (f) {
+    f.printf("%.1f,%.1f,%.1f\n", t, h, p);
+    f.close();
+    colaPendiente++;
+  }
+}
+
+// Envía UNA lectura a Google Sheets; true si el servidor respondió (2xx/3xx).
+bool enviarLecturaHttp(float t, float h, float p) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  HTTPClient http;
+  if (!http.begin(String(GOOGLE_SCRIPT_URL))) return false;
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  http.setTimeout(10000);
+  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+  http.setReuse(false);          // 🔒 Protección contra fugas de sockets a largo plazo
+  String postData = "temp=" + String(t, 1) + "&hum=" + String(h, 1) + "&pres=" + String(p, 1);
+  int codigo = http.POST(postData);
+  http.end();
+  if (codigo <= 0) {
+    Serial.printf("Envio fallido (HTTP %d)\n", codigo);
+    return false;
+  }
+  return true;
+}
+
+// Reenvía hasta maxPorVez lecturas pendientes (la más antigua primero).
+void drenarCola(int maxPorVez) {
+  if (!fsListo || colaPendiente <= 0) return;
+  if (WiFi.status() != WL_CONNECTED || !sendToSheetsEnabled) return;
+  if (estadoEnvio != ENVIO_INACTIVO) return; // no interferir con un envío en curso
+
+  String lineas[COLA_MAX];
+  int n = 0;
+  File f = LittleFS.open(COLA_ARCHIVO, "r");
+  if (!f) return;
+  while (f.available() && n < COLA_MAX) {
+    String linea = f.readStringUntil('\n');
+    linea.trim();
+    if (linea.length() > 0) lineas[n++] = linea;
+  }
+  f.close();
+
+  int enviadas = 0;
+  for (int i = 0; i < n && enviadas < maxPorVez; i++) {
+    float t, h, p;
+    if (sscanf(lineas[i].c_str(), "%f,%f,%f", &t, &h, &p) == 3) {
+      if (enviarLecturaHttp(t, h, p)) {
+        enviadas++;
+        colaPendiente--;
+      } else {
+        break; // si falla una, esperar al siguiente ciclo
+      }
+    }
+  }
+  if (enviadas > 0) {
+    File fw = LittleFS.open(COLA_ARCHIVO, "w");
+    if (fw) {
+      for (int i = enviadas; i < n; i++) fw.println(lineas[i]);
+      fw.close();
+    }
+    registrarEvento("Cola: " + String(enviadas) + " lecturas reenviadas (" +
+                    String(colaPendiente) + " pendientes)");
+  }
+}
+
 // --- ENVÍO A GOOGLE SHEETS (no bloqueante, método original + antídotos 24/7) ---
 void intentarEnvio() {
   if (WiFi.status() != WL_CONNECTED || !sendToSheetsEnabled) return;
@@ -214,27 +321,10 @@ void intentarEnvio() {
   estadoSheetsWeb = "Enviando...";
   ledSensor.encender();
 
-  HTTPClient http;
-  http.begin(String(GOOGLE_SCRIPT_URL));
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-  http.setTimeout(10000);
-  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-  http.setReuse(false);          // 🔒 Protección contra fugas de sockets a largo plazo
-
-  String postData = "temp=" + String(envioTemp, 1) + "&hum=" + String(envioHum, 1) + "&pres=" + String(envioPres, 1);
-  int codigo = http.POST(postData);
-  
-  // Diagnóstico opcional en el monitor serie (puedes eliminarlo más adelante)
-  Serial.print("HTTP Code: ");
-  Serial.println(codigo);
-  if (codigo <= 0) {
-    Serial.println("Fallo envío – socket liberado correctamente.");
-  }
-  
-  http.end();
+  bool ok = enviarLecturaHttp(envioTemp, envioHum, envioPres);
   ledSensor.apagar();
 
-  if (codigo > 0) {
+  if (ok) {
     if (envioFallando) {
       registrarEvento("Sheets: envio recuperado");
       envioFallando = false;
@@ -245,7 +335,7 @@ void intentarEnvio() {
     intentosRealizados = 0;
   } else {
     if (!envioFallando) {
-      registrarEvento("Sheets: fallo de envio (HTTP " + String(codigo) + ")");
+      registrarEvento("Sheets: fallo de envio");
       envioFallando = true;
     }
     intentosRealizados++;
@@ -254,6 +344,8 @@ void intentarEnvio() {
       estadoSheetsWeb = "Error envío";
       estadoEnvio = ENVIO_INACTIVO;
       intentosRealizados = 0;
+      // Conservar la lectura para reenviarla después (cola offline)
+      encolarLectura(envioTemp, envioHum, envioPres);
     } else {
       estadoSheetsWeb = "Reintentando...";
       estadoEnvio = ENVIO_ESPERA_REINTENTO;
@@ -345,7 +437,14 @@ void leerSensor() {
       lastPres = pressure;
       lecturaValida = true;
 
-      iniciarEnvio(temperature, humidity, pressure);
+      if (sendToSheetsEnabled) {
+        if (WiFi.status() == WL_CONNECTED) {
+          iniciarEnvio(temperature, humidity, pressure);
+        } else {
+          // Sin red: guardar la lectura para reenviarla cuando vuelva el WiFi
+          encolarLectura(temperature, humidity, pressure);
+        }
+      }
       return;
     }
     
@@ -571,6 +670,8 @@ void setup() {
   intervaloEnvio = preferences.getULong("intervalo", 10000);
   preferences.end();
 
+  inicializarFS();
+
   WiFiManager wm;
   wm.setAPCallback(configModeCallback);
   wm.setConfigPortalTimeout(180);
@@ -641,6 +742,13 @@ void loop() {
   ledWifi.actualizar(); ledSensor.actualizar(); ledError.actualizar();
 
   procesarEstadoEnvio();
+
+  // Drenar la cola offline (hasta 5 lecturas) cada 15 s cuando hay red
+  static unsigned long ultimoDrenaje = 0;
+  if (millis() - ultimoDrenaje >= 15000) {
+    ultimoDrenaje = millis();
+    drenarCola(5);
+  }
 
   if (millis() - lastFirmwareCheck >= firmwareCheckInterval) {
     lastFirmwareCheck = millis();
