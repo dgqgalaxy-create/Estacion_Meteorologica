@@ -120,6 +120,10 @@ String alertaWeb = "Sin alertas";
 float lastTemp = 0.0, lastHum = 0.0, lastPres = 0.0;
 bool lecturaValida = false;
 
+// URL de Google Sheets en uso. Se persiste en NVS (configurable desde el panel);
+// config.h solo se usa como valor inicial del primer arranque.
+String sheetsUrlActual;
+
 // --- FUNCIONES MATEMÁTICAS ---
 float calcularDewPoint(float t, float h) {
   float a = 17.27;
@@ -214,6 +218,26 @@ void guardarIntervalo(unsigned long nuevoIntervalo) {
   preferences.putULong("intervalo", nuevoIntervalo);
   preferences.end();
   intervaloEnvio = nuevoIntervalo;
+}
+
+void guardarSheetsUrl(const String& url) {
+  String limpia = url;
+  limpia.trim();
+  if (!limpia.startsWith("https://") && !limpia.startsWith("http://")) {
+    Serial.println("URL de Google Sheets invalida; se ignora");
+    return;
+  }
+  sheetsUrlActual = limpia;
+  preferences.begin("sheets", false);
+  preferences.putString("url", limpia);
+  preferences.end();
+  registrarEvento("Sheets: URL configurada");
+  Serial.println("URL de Google Sheets guardada en NVS");
+}
+
+String obtenerSheetsUrl() {
+  if (sheetsUrlActual.length() > 0) return sheetsUrlActual;
+  return String(GOOGLE_SCRIPT_URL);
 }
 
 void actualizarHistorial(float t, float h) {
@@ -359,8 +383,10 @@ void encolarLectura(float t, float h, float p) {
 // Envía UNA lectura a Google Sheets; true si el servidor respondió (2xx/3xx).
 bool enviarLecturaHttp(float t, float h, float p) {
   if (WiFi.status() != WL_CONNECTED) return false;
+  String url = obtenerSheetsUrl();
+  if (url.length() < 15) return false;
   HTTPClient http;
-  if (!http.begin(String(GOOGLE_SCRIPT_URL))) return false;
+  if (!http.begin(url)) return false;
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
   http.setTimeout(10000);
   http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
@@ -922,6 +948,14 @@ void setup() {
   preferences.begin("config", true);
   intervaloEnvio = preferences.getULong("intervalo", 10000);
   preferences.end();
+
+  // URL de Google Sheets: la guardada en NVS o, si no existe, la de config.h
+  preferences.begin("sheets", true);
+  sheetsUrlActual = preferences.getString("url", "");
+  preferences.end();
+  if (sheetsUrlActual.length() == 0) {
+    sheetsUrlActual = GOOGLE_SCRIPT_URL;
+  }
 
   cargarAlertas();
   inicializarFS();

@@ -423,6 +423,12 @@ const char index_html[] PROGMEM = R"rawliteral(
                 <a href="/resetwifi" class="btn btn-danger" onclick="return confirm('¿Borrar credenciales WiFi?')"><i class='bx bx-wifi-off'></i> Reset WiFi</a>
             </div>
 
+            <form action="/setsheetsurl" method="GET" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:rgba(0,0,0,0.05);padding:5px 15px;border-radius:30px;margin-top:12px;">
+                <label style="font-size:0.85rem;font-weight:600;">URL Google Sheets:</label>
+                <input type="url" name="url" value="%SHEETS_URL%" size="45" style="flex:1;min-width:220px;padding:5px;border-radius:5px;border:1px solid var(--card-border);background:transparent;color:var(--text-main);font-size:0.75rem;">
+                <button type="submit" class="btn btn-success" style="padding:6px 12px;font-size:0.8rem;"><i class='bx bx-save'></i> Guardar</button>
+            </form>
+
             <div class="status-bar">
                 <span><i class='bx bx-wifi'></i> IP: <span id="ipWeb">%IP%</span></span>
                 <span><i class='bx bx-signal-4'></i> Senal: <span id="rssiWeb">%RSSI%</span> dBm</span>

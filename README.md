@@ -165,6 +165,7 @@ Desde el panel puedes:
 | `/data.json` | Historial de temperatura y humedad |
 | `/toggle` | Activa o pausa el envio |
 | `/setinterval?segundos=30` | Guarda un nuevo intervalo |
+| `/setsheetsurl?url=...` | Guarda la URL de Google Sheets en NVS |
 | `/setalerts?...` | Guarda umbrales de alerta (`on`, `tmax`, `tmin`, `hmax`, `hmin`) |
 | `/retry` | Reintenta el ultimo envio |
 | `/checkupdate` | Consulta inmediatamente una nueva version del firmware |
@@ -184,6 +185,11 @@ El Apps Script debe estar desplegado como aplicacion web y aceptar solicitudes
 anonimas si el dispositivo no dispone de autenticacion. La aplicacion sigue
 hasta seis intentos cuando un envio falla; despues marca el estado como error
 y permite reintentarlo desde el panel.
+
+La URL del Apps Script se guarda en NVS y se puede cambiar desde el panel
+(`/setsheetsurl`); `include/config.h` solo se usa como valor inicial en el
+primer arranque. Asi, una actualizacion OTA (cuyo binario publico no contiene
+tu URL privada) no rompe el envio de los dispositivos ya configurados.
 
 Si el WiFi esta caido o un envio agota sus reintentos, la lectura se guarda en
 una cola offline (`/cola.csv` en LittleFS, hasta 200 lecturas) y se reenvia
@@ -225,7 +231,7 @@ que se cargo en el ESP32; no es la fecha de la ultima consulta a GitHub.
 
 El ESP32 no puede actualizarse por si mismo si nunca ha recibido un firmware
 con esta logica OTA. Por eso, cada dispositivo debe recibir una primera carga
-por USB con la version actual del proyecto (`1.1.0`), incluyendo su
+por USB con la version actual del proyecto (`1.1.1`), incluyendo su
 `include/config.h` local. Despues de esa carga, las siguientes versiones se
 pueden distribuir mediante GitHub Releases sin volver a conectar el USB.
 

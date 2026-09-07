@@ -47,6 +47,8 @@ extern void guardarAlertas();
 extern int colaPendiente;
 extern String obtenerFecha();
 extern String obtenerLogEventos();
+extern void guardarSheetsUrl(const String&);
+extern String obtenerSheetsUrl();
 
 // Plantilla HTML reutilizable (cargada una sola vez)
 String htmlTemplate;
@@ -100,6 +102,7 @@ void handleRoot() {
     html.replace("%ALERTA_TMIN%", String(alertaTempMin, 1));
     html.replace("%ALERTA_HMAX%", String(alertaHumMax, 0));
     html.replace("%ALERTA_HMIN%", String(alertaHumMin, 0));
+    html.replace("%SHEETS_URL%", obtenerSheetsUrl());
     
     server.send(200, "text/html", html);
 }
@@ -114,6 +117,14 @@ void handleSetInterval() {
     if (server.hasArg("segundos")) {
         unsigned long secs = server.arg("segundos").toInt();
         if (secs >= 5 && secs <= 3600) guardarIntervalo(secs * 1000);
+    }
+    server.sendHeader("Location", "/");
+    server.send(303);
+}
+
+void handleSetSheetsUrl() {
+    if (server.hasArg("url")) {
+        guardarSheetsUrl(server.arg("url"));
     }
     server.sendHeader("Location", "/");
     server.send(303);
@@ -276,6 +287,7 @@ void setupWeb() {
     server.on("/", handleRoot);
     server.on("/toggle", handleToggle);
     server.on("/setinterval", handleSetInterval);
+    server.on("/setsheetsurl", handleSetSheetsUrl);
     server.on("/setalerts", handleSetAlerts);
     server.on("/data.json", handleDataJson);
     server.on("/api/current", handleCurrentJson);
