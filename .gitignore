@@ -1,0 +1,28 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.piolibdeps_backup/
+.pio_ignore
+.pio_build/
+
+# Archivos secretos
+include/config.h
+src/secrets.h
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# IDE
+.idea/
+
+# Sistema
+.DS_Store
+Thumbs.db
+._*
+
+# Archivos temporales
+*.tmp
+*.swp
+*~
