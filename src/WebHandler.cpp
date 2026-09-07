@@ -200,7 +200,7 @@ void handleCurrentJson() {
   json += ",\"version\":\"" + String(firmwareVersion) + "\"";
   json += ",\"actualizado\":\"" + String(firmwareBuildDate) + "\"";
   json += ",\"tend\":\"" + tendenciaEstadoWeb + "\"";
-  json += ",\"trate\":" + String(tendenciaActual, 2);
+  json += ",\"trate\":" + String(isnan(tendenciaActual) ? "null" : String(tendenciaActual, 2));
   json += ",\"alerta\":\"" + alertaWeb + "\"";
   json += ",\"pendientes\":" + String(colaPendiente);
   json += "}";
