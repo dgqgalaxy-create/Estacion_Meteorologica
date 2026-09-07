@@ -23,6 +23,15 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
+      - name: Create CI configuration
+        run: |
+          cat > include/config.h <<'EOF'
+          #ifndef CONFIG_H
+          #define CONFIG_H
+          const char* GOOGLE_SCRIPT_URL = "https://example.invalid/exec";
+          #endif
+          EOF
+
       - name: Build firmware
         run: pio run
 
