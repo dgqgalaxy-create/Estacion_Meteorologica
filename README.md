@@ -172,9 +172,10 @@ y permite reintentarlo desde el panel.
 
 ## Actualizaciones OTA
 
-Despues de la primera carga por USB, el dispositivo anuncia el servicio OTA
-con el nombre `estacion-clima`. Si PlatformIO lo detecta en la red, configura
-el puerto OTA en `platformio.ini` o ejecuta:
+El proyecto admite dos mecanismos OTA. Despues de la primera carga por USB, el
+dispositivo anuncia el servicio OTA con el nombre `estacion-clima`. Si
+PlatformIO lo detecta en la red, configura el puerto OTA en `platformio.ini` o
+ejecuta:
 
 ```bash
 pio run -t upload --upload-port estacion-clima.local
@@ -182,6 +183,30 @@ pio run -t upload --upload-port estacion-clima.local
 
 Tambien puedes reemplazar el nombre por la IP local del ESP32 si mDNS no esta
 disponible.
+
+Ademas, cada seis horas el ESP32 consulta la ultima GitHub Release publica del
+repositorio. Si encuentra un tag semantico mayor que su version instalada,
+descarga el asset `firmware.bin`, lo instala y reinicia. La primera consulta se
+realiza aproximadamente un minuto despues del arranque.
+
+Para publicar una version automatica:
+
+1. Cambia `firmwareVersion` en `src/main.cpp` y la version
+   `FIRMWARE_VERSION` de `platformio.ini` al mismo valor.
+2. Haz commit de los cambios.
+3. Crea y sube un tag:
+
+   ```bash
+   git tag v1.1.0
+   git push origin v1.1.0
+   ```
+
+GitHub Actions compilara el firmware y creara una release con `firmware.bin`.
+El repositorio debe ser publico para que el ESP32 pueda consultar la release y
+descargarla sin credenciales. La actualizacion usa HTTPS, pero el firmware no
+puede validar la cadena de certificados de GitHub de forma estricta porque los
+certificados pueden rotar; por eso se recomienda usar esta funcion solo con
+releases controladas y una red WiFi confiable.
 
 ## Estructura del proyecto
 

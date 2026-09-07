@@ -2,6 +2,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
+#include <HTTPUpdate.h>
+#include <WiFiClientSecure.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_AHTX0.h>
 #include <Wire.h>
@@ -17,6 +19,16 @@
 #include "config.h"
 #include "StatusLed.h" 
 #include "WebHandler.h" 
+
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "1.0.0"
+#endif
+
+const char* firmwareVersion = FIRMWARE_VERSION;
+const char* firmwareReleaseApi =
+    "https://api.github.com/repos/dgqgalaxy-create/Estacion_Meteorologica/releases/latest";
+const unsigned long firmwareCheckInterval = 6UL * 60UL * 60UL * 1000UL;
+unsigned long lastFirmwareCheck = 0;
 
 // --- HARDWARE ---
 Adafruit_BMP280 bmp; 
@@ -315,6 +327,75 @@ void configurarOTA() {
   MDNS.begin("estacion-clima");
 }
 
+String extraerJsonString(const String& json, const String& key, int desde = 0) {
+  String marker = "\"" + key + "\":\"";
+  int inicio = json.indexOf(marker, desde);
+  if (inicio < 0) return "";
+  inicio += marker.length();
+  int fin = json.indexOf('"', inicio);
+  if (fin < 0) return "";
+  return json.substring(inicio, fin);
+}
+
+bool versionNueva(const String& remota) {
+  String version = remota;
+  if (version.startsWith("v") || version.startsWith("V")) version.remove(0, 1);
+
+  int localMajor, localMinor, localPatch;
+  int remoteMajor, remoteMinor, remotePatch;
+  if (sscanf(firmwareVersion, "%d.%d.%d", &localMajor, &localMinor, &localPatch) != 3 ||
+      sscanf(version.c_str(), "%d.%d.%d", &remoteMajor, &remoteMinor, &remotePatch) != 3) {
+    return false;
+  }
+
+  if (remoteMajor != localMajor) return remoteMajor > localMajor;
+  if (remoteMinor != localMinor) return remoteMinor > localMinor;
+  return remotePatch > localPatch;
+}
+
+void comprobarActualizacionFirmware() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(15000);
+  http.begin(client, firmwareReleaseApi);
+  http.addHeader("User-Agent", "Estacion-Meteorologica-ESP32");
+
+  int codigo = http.GET();
+  if (codigo != HTTP_CODE_OK) {
+    Serial.printf("No se pudo consultar firmware (%d)\n", codigo);
+    http.end();
+    return;
+  }
+
+  String respuesta = http.getString();
+  http.end();
+
+  String versionRemota = extraerJsonString(respuesta, "tag_name");
+  int firmwareAsset = respuesta.indexOf("\"name\":\"firmware.bin\"");
+  String urlFirmware = extraerJsonString(respuesta, "browser_download_url", firmwareAsset);
+  if (versionRemota.isEmpty() || urlFirmware.isEmpty()) {
+    Serial.println("Release sin tag o firmware.bin");
+    return;
+  }
+
+  Serial.printf("Firmware local: %s, remoto: %s\n", firmwareVersion, versionRemota.c_str());
+  if (!versionNueva(versionRemota)) return;
+
+  Serial.printf("Actualizando a %s...\n", versionRemota.c_str());
+  estadoSheetsWeb = "Actualizando firmware...";
+  WiFiClientSecure updateClient;
+  updateClient.setInsecure();
+  t_httpUpdate_return resultado = httpUpdate.update(updateClient, urlFirmware);
+
+  if (resultado == HTTP_UPDATE_FAILED) {
+    Serial.printf("Fallo OTA: %s\n", httpUpdate.getLastErrorString().c_str());
+    estadoSheetsWeb = "Error OTA";
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   Wire.begin(21, 22); 
@@ -370,6 +451,7 @@ void setup() {
   esp_task_wdt_add(NULL);
   
   leerSensor();
+  lastFirmwareCheck = millis() - firmwareCheckInterval + 60000;
 }
 
 void loop() {
@@ -392,6 +474,11 @@ void loop() {
   ledWifi.actualizar(); ledSensor.actualizar(); ledError.actualizar();
 
   procesarEstadoEnvio();
+
+  if (millis() - lastFirmwareCheck >= firmwareCheckInterval) {
+    lastFirmwareCheck = millis();
+    comprobarActualizacionFirmware();
+  }
 
   static unsigned long lastSendTime = 0;
   if (millis() - lastSendTime >= intervaloEnvio) {
