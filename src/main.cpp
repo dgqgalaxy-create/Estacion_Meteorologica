@@ -21,7 +21,7 @@
 #include "WebHandler.h" 
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION "1.0.1"
 #endif
 
 const char* firmwareVersion = FIRMWARE_VERSION;
@@ -421,7 +421,7 @@ void setup() {
   WiFi.setAutoReconnect(true);
 
   if (WiFi.status() == WL_CONNECTED) {
-    ledWifi.parpadear(2000);
+    ledWifi.pulsar(1000, 10);
     estadoWifiWeb = "Conectado";
   } else {
     ledWifi.parpadear(100);
@@ -438,7 +438,7 @@ void setup() {
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
     Serial.println("WiFi conectado. IP: " + WiFi.localIP().toString());
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    ledWifi.parpadear(2000);
+    ledWifi.pulsar(1000, 10);
     estadoWifiWeb = "Conectado";
   }, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
 

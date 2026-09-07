@@ -41,7 +41,7 @@ GPIO correspondiente. El parpadeo no bloquea el funcionamiento del equipo.
 
 | LED | GPIO | Estado | Interpretacion |
 | --- | ---: | --- | --- |
-| WiFi | 12 | Parpadeo lento, cambio cada 2 s | Conectado a la red WiFi |
+| WiFi | 12 | Pulso breve: 10 ms encendido y 1 s apagado | Conectado a la red WiFi |
 | WiFi | 12 | Parpadeo rapido, cambio cada 100 ms | WiFi desconectado o intentando reconectar |
 | WiFi, sensor y error | 12, 14, 27 | Los tres parpadean cada 200 ms durante 3 ciclos | El ESP32 esta entrando en el portal de configuracion WiFi |
 | WiFi | 12 | Encendido fijo despues de la secuencia anterior | Portal `Estacion-Clima-Config` activo |
