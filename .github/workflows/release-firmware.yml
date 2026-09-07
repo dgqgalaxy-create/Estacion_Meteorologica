@@ -23,6 +23,16 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
+      - name: Verify FIRMWARE_VERSION matches the tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(grep -o 'FIRMWARE_VERSION=\\"[0-9.]*\\"' platformio.ini | grep -o '[0-9.]*')
+          echo "Tag: $TAG   FIRMWARE_VERSION: $VER"
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::El tag $GITHUB_REF_NAME no coincide con FIRMWARE_VERSION=$VER en platformio.ini"
+            exit 1
+          fi
+
       - name: Create CI configuration
         run: |
           cat > include/config.h <<'EOF'

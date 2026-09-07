@@ -533,7 +533,8 @@ const char index_html[] PROGMEM = R"rawliteral(
                 dotWifi.className = d.wifi === 'Conectado' ? 'status-dot dot-ok' : 'status-dot dot-error';
                 dotSensor.className = d.sensor === 'OK' ? 'status-dot dot-ok' : 'status-dot dot-error';
                 dotSheets.className = d.sheets === 'OK' ? 'status-dot dot-ok' : (d.sheets === 'Pausado' ? 'status-dot dot-warning' : 'status-dot dot-error');
-                dotFirmware.className = d.firmware === 'Actualizado' ? 'status-dot dot-ok' : (d.firmware === 'Actualizando...' ? 'status-dot dot-warning' : 'status-dot dot-error');
+                const fwOk = (d.firmware === 'Actualizado' || d.firmware === 'Firmware comprobado');
+                dotFirmware.className = fwOk ? 'status-dot dot-ok' : (d.firmware === 'Actualizando...' ? 'status-dot dot-warning' : 'status-dot dot-error');
             }).catch(e => console.error(e));
         }
 

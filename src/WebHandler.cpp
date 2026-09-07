@@ -23,8 +23,8 @@ extern unsigned long intervaloEnvio;
 extern void guardarIntervalo(unsigned long);
 extern String obtenerHora();
 
-extern float tempHistory[4][25];
-extern float humHistory[4][25];
+extern float tempHistory[4][24];
+extern float humHistory[4][24];
 
 extern String estadoWifiWeb;
 extern String estadoSensorWeb;
@@ -64,7 +64,6 @@ void handleRoot() {
 
     String status = sendToSheetsEnabled ? "ACTIVADO" : "PAUSADO";
     html.replace("%ESTADO%", status);
-    html.replace("%INTERVALO%", String(intervaloEnvio / 1000));
     html.replace("%INTERVALO_SEC%", String(intervaloEnvio / 1000));
     html.replace("%TOGGLE_TEXT%", sendToSheetsEnabled ? "<i class='bx bx-pause-circle'></i> Pausar Envío" : "<i class='bx bx-play-circle'></i> Reanudar Envío");
     html.replace("%TOGGLE_CLASS%", sendToSheetsEnabled ? "btn-danger" : "btn-success");
@@ -104,18 +103,18 @@ void handleDataJson() {
   json = "{";
   for(int d=0; d<4; d++) {
     json += "\"t" + String(d) + "\":[";
-    for (int i = 0; i < 25; i++) {
+    for (int i = 0; i < 24; i++) {
       if (isnan(tempHistory[d][i])) json += "null";
       else json += String(tempHistory[d][i], 1);
-      if (i < 24) json += ",";
+      if (i < 23) json += ",";
     }
     json += "],";
     
     json += "\"h" + String(d) + "\":[";
-    for (int i = 0; i < 25; i++) {
+    for (int i = 0; i < 24; i++) {
       if (isnan(humHistory[d][i])) json += "null";
       else json += String(humHistory[d][i], 1);
-      if (i < 24) json += ",";
+      if (i < 23) json += ",";
     }
     json += "]";
     if (d < 3) json += ",";
@@ -164,9 +163,6 @@ void handleRetry() {
 
 void handleCheckUpdate() {
     comprobarActualizacionFirmware();
-    if (estadoFirmwareWeb != "Actualizando..." && estadoFirmwareWeb != "Error OTA") {
-        estadoFirmwareWeb = "Actualizado";
-    }
     server.sendHeader("Location", "/");
     server.send(303);
 }

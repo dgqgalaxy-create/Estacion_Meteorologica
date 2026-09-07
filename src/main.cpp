@@ -20,8 +20,10 @@
 #include "StatusLed.h" 
 #include "WebHandler.h" 
 
+// La versión se define en una única fuente: platformio.ini (build_flags).
+// Mantenerla aquí duplicada provocó releases desincronizadas.
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "1.0.8"
+#error "FIRMWARE_VERSION no esta definida: defínela en platformio.ini dentro de build_flags"
 #endif
 
 const char* firmwareVersion = FIRMWARE_VERSION;
@@ -62,16 +64,15 @@ const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = -21600;
 const int   daylightOffset_sec = 0;
 
-float tempHistory[4][25]; 
-float humHistory[4][25];  
+float tempHistory[4][24]; 
+float humHistory[4][24];  
 int currentDay = -1;
 
 // --- ESTADOS PARA EL ENVÍO NO BLOQUEANTE ---
 enum EstadoEnvio {
   ENVIO_INACTIVO,
   ENVIO_INTENTANDO,
-  ENVIO_ESPERA_REINTENTO,
-  ENVIO_ERROR
+  ENVIO_ESPERA_REINTENTO
 };
 EstadoEnvio estadoEnvio = ENVIO_INACTIVO;
 unsigned long tiempoUltimoIntento = 0;
@@ -87,6 +88,12 @@ String estadoSensorWeb = "OK";
 String estadoSheetsWeb = "OK";
 String estadoFirmwareWeb = "Actualizado";
 bool otaEnProgreso = false; // Evita lanzar dos OTA simultáneas
+
+// --- LOG DE EVENTOS EN RAM (últimos eventos para diagnóstico web) ---
+const int LOG_EVENTOS_MAX = 20;
+String eventosLog[LOG_EVENTOS_MAX];
+int eventosIdx = 0;
+int eventosCount = 0;
 
 // --- DATOS PERSISTENTES PARA REINTENTOS Y RESPALDO ---
 float lastTemp = 0.0, lastHum = 0.0, lastPres = 0.0;
@@ -110,20 +117,29 @@ float calcularHeatIndex(float t, float h) {
 }
 
 // --- GESTIÓN DEL TIEMPO Y RESET DIARIO ---
+// La hora solo es válida tras sincronizar NTP; sin eso la fecha queda en 1970
+// y rompería el historial/récords diarios con datos fantasma.
+bool tiempoSincronizado() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo, 200)) return false;
+  return timeinfo.tm_year >= (2024 - 1900);
+}
+
 void verificarCambioDeDia() {
   struct tm timeinfo;
+  if (!tiempoSincronizado()) return;
   if(!getLocalTime(&timeinfo)) return;
 
   if (currentDay != timeinfo.tm_mday) {
     currentDay = timeinfo.tm_mday;
     
     for(int d=3; d>0; d--) {
-        for(int i=0; i<25; i++) {
+        for(int i=0; i<24; i++) {
             tempHistory[d][i] = tempHistory[d-1][i];
             humHistory[d][i] = humHistory[d-1][i];
         }
     }
-    for(int i=0; i<25; i++) {
+    for(int i=0; i<24; i++) {
         tempHistory[0][i] = NAN;
         humHistory[0][i] = NAN;
     }
@@ -138,10 +154,29 @@ void verificarCambioDeDia() {
 
 String obtenerHora() {
   struct tm timeinfo;
-  if(!getLocalTime(&timeinfo)) return "--:--:--"; 
+  if(!tiempoSincronizado()) return "--:--:--"; 
+  getLocalTime(&timeinfo);
   char timeStringBuff[50];
   strftime(timeStringBuff, sizeof(timeStringBuff), "%H:%M:%S", &timeinfo);
   return String(timeStringBuff);
+}
+
+void registrarEvento(const String& e) {
+  String hora = obtenerHora();
+  String linea = (hora == "--:--:--") ? e : hora + "  " + e;
+  eventosLog[eventosIdx] = linea;
+  eventosIdx = (eventosIdx + 1) % LOG_EVENTOS_MAX;
+  if (eventosCount < LOG_EVENTOS_MAX) eventosCount++;
+}
+
+String obtenerLogEventos() {
+  String out;
+  for (int i = 0; i < eventosCount; i++) {
+    int idx = (eventosIdx - eventosCount + i + LOG_EVENTOS_MAX) % LOG_EVENTOS_MAX;
+    out += eventosLog[idx];
+    out += '\n';
+  }
+  return out;
 }
 
 void guardarIntervalo(unsigned long nuevoIntervalo) {
@@ -153,9 +188,9 @@ void guardarIntervalo(unsigned long nuevoIntervalo) {
 
 void actualizarHistorial(float t, float h) {
   struct tm timeinfo;
-  if(getLocalTime(&timeinfo)) {
+  if(getLocalTime(&timeinfo) && timeinfo.tm_year >= (2024 - 1900)) {
       int hora = timeinfo.tm_hour;
-      if(hora >= 0 && hora <= 24) {
+      if(hora >= 0 && hora <= 23) {
           tempHistory[0][hora] = t;
           humHistory[0][hora] = h;
       }
@@ -174,6 +209,7 @@ void actualizarRecords(float t, float h, float p) {
 // --- ENVÍO A GOOGLE SHEETS (no bloqueante, método original + antídotos 24/7) ---
 void intentarEnvio() {
   if (WiFi.status() != WL_CONNECTED || !sendToSheetsEnabled) return;
+  static bool envioFallando = false;
 
   estadoSheetsWeb = "Enviando...";
   ledSensor.encender();
@@ -199,11 +235,19 @@ void intentarEnvio() {
   ledSensor.apagar();
 
   if (codigo > 0) {
+    if (envioFallando) {
+      registrarEvento("Sheets: envio recuperado");
+      envioFallando = false;
+    }
     ledError.apagar();
     estadoSheetsWeb = "OK";
     estadoEnvio = ENVIO_INACTIVO;
     intentosRealizados = 0;
   } else {
+    if (!envioFallando) {
+      registrarEvento("Sheets: fallo de envio (HTTP " + String(codigo) + ")");
+      envioFallando = true;
+    }
     intentosRealizados++;
     if (intentosRealizados >= maxIntentos) {
       ledError.parpadear(200);
@@ -230,7 +274,7 @@ void iniciarEnvio(float t, float h, float p) {
 }
 
 void reintentarEnvioAhora() {
-  if (estadoEnvio == ENVIO_INACTIVO || estadoEnvio == ENVIO_ERROR) {
+  if (estadoEnvio == ENVIO_INACTIVO) {
     envioTemp = lastTemp;
     envioHum = lastHum;
     envioPres = lastPres;
@@ -267,6 +311,7 @@ void procesarEstadoEnvio() {
 
 // --- LECTURA DE SENSORES (validación corregida para altitud) ---
 void leerSensor() {
+  static bool sensorEnError = false;
   for (int intento = 0; intento < 3; intento++) {
     sensors_event_t humidity_event, temp_event;
     aht.getEvent(&humidity_event, &temp_event); 
@@ -288,6 +333,10 @@ void leerSensor() {
       actualizarHistorial(temperature, humidity);
       actualizarRecords(temperature, humidity, pressure);
 
+      if (sensorEnError) {
+        registrarEvento("Sensor: lectura recuperada");
+        sensorEnError = false;
+      }
       ledError.apagar();
       estadoSensorWeb = "OK";
       
@@ -312,6 +361,10 @@ void leerSensor() {
     estadoSensorWeb = "Sensor recuperando";
   } else {
     estadoSensorWeb = "Error sensor";
+  }
+  if (!sensorEnError) {
+    registrarEvento("Sensor: error de lectura");
+    sensorEnError = true;
   }
   ledError.parpadear(100);
 }
@@ -388,6 +441,7 @@ t_httpUpdate_return descargarYActualizarFirmware(const String& urlFirmware) {
   httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
   httpUpdate.onStart([]() {
     Serial.println("OTA: descarga iniciada");
+    registrarEvento("OTA: descarga iniciada");
     mostrarBaileActualizacion(0, 1);
   });
   httpUpdate.onProgress([](int progreso, int total) {
@@ -421,10 +475,12 @@ t_httpUpdate_return descargarYActualizarFirmware(const String& urlFirmware) {
     case HTTP_UPDATE_OK:
       // httpUpdate ya ejecuta ESP.restart() en este caso.
       Serial.println("OTA: instalado correctamente. Reiniciando...");
+      registrarEvento("OTA: instalado correctamente, reiniciando");
       break;
     case HTTP_UPDATE_FAILED:
       Serial.printf("Fallo OTA: %s\n", httpUpdate.getLastErrorString().c_str());
       estadoFirmwareWeb = "Error OTA";
+      registrarEvento("OTA: fallo - " + httpUpdate.getLastErrorString());
       ledWifi.pulsar(3000, 10);
       ledSensor.apagar();
       ledError.parpadear(200);
@@ -441,6 +497,7 @@ void comprobarActualizacionFirmware() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   otaEnProgreso = true;
+  registrarEvento("OTA: buscando actualizacion");
   Serial.println("--- Buscando actualizacion de firmware ---");
 
   WiFiClientSecure client;
@@ -451,6 +508,7 @@ void comprobarActualizacionFirmware() {
 
   if (!http.begin(client, firmwareReleaseApi)) {
     Serial.println("No se pudo iniciar HTTP hacia la API de GitHub");
+    estadoFirmwareWeb = "Error consulta";
     otaEnProgreso = false;
     return;
   }
@@ -459,6 +517,8 @@ void comprobarActualizacionFirmware() {
   int codigo = http.GET();
   if (codigo != HTTP_CODE_OK) {
     Serial.printf("No se pudo consultar firmware (%d)\n", codigo);
+    estadoFirmwareWeb = "Error consulta";
+    registrarEvento("OTA: error consultando GitHub (" + String(codigo) + ")");
     http.end();
     otaEnProgreso = false;
     return;
@@ -470,6 +530,7 @@ void comprobarActualizacionFirmware() {
   String versionRemota = extraerJsonString(respuesta, "tag_name");
   if (versionRemota.isEmpty()) {
     Serial.println("Release sin tag de version");
+    estadoFirmwareWeb = "Error consulta";
     otaEnProgreso = false;
     return;
   }
@@ -477,6 +538,8 @@ void comprobarActualizacionFirmware() {
   Serial.printf("Firmware local: %s, remoto: %s\n", firmwareVersion, versionRemota.c_str());
   if (!versionNueva(versionRemota)) {
     Serial.println("Sin version nueva disponible");
+    estadoFirmwareWeb = "Firmware comprobado";
+    registrarEvento("OTA: comprobado, sin version nueva");
     otaEnProgreso = false;
     return;
   }
@@ -492,12 +555,13 @@ void comprobarActualizacionFirmware() {
 
 void setup() {
   Serial.begin(115200);
+  registrarEvento("Arranque - firmware " + String(firmwareVersion) + " (" + String(firmwareBuildDate) + ")");
   Wire.begin(21, 22); 
   if (!aht.begin()) Serial.println("Fallo AHT20");
   if (!bmp.begin(0x76) && !bmp.begin(0x77)) Serial.println("Fallo BMP280");
   
   for(int d=0; d<4; d++) {
-    for(int i=0; i<25; i++) { 
+    for(int i=0; i<24; i++) { 
         tempHistory[d][i] = NAN; 
         humHistory[d][i] = NAN; 
     }
@@ -526,6 +590,7 @@ void setup() {
     Serial.println("WiFi perdido. Intentando reconectar...");
     estadoWifiWeb = "Reconectando...";
     ledWifi.parpadear(100);
+    registrarEvento("WiFi: conexion perdida");
   }, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
@@ -533,6 +598,7 @@ void setup() {
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     ledWifi.pulsar(3000, 10);
     estadoWifiWeb = "Conectado";
+    registrarEvento("WiFi: conectado, IP " + WiFi.localIP().toString());
   }, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
 
   delay(2000); 
@@ -563,6 +629,13 @@ void loop() {
     }
   } else {
     tiempoSinWiFi = 0;
+  }
+
+  // Reintentar NTP (1 vez por minuto) hasta conseguir una hora válida.
+  static unsigned long ultimoIntentoNTP = 0;
+  if (!tiempoSincronizado() && millis() - ultimoIntentoNTP >= 60000) {
+    ultimoIntentoNTP = millis();
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   }
   
   ledWifi.actualizar(); ledSensor.actualizar(); ledError.actualizar();
