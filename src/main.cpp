@@ -21,7 +21,7 @@
 #include "WebHandler.h" 
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "1.0.7"
+#define FIRMWARE_VERSION "1.0.8"
 #endif
 
 const char* firmwareVersion = FIRMWARE_VERSION;
@@ -86,6 +86,7 @@ String estadoWifiWeb = "Desconectado";
 String estadoSensorWeb = "OK";
 String estadoSheetsWeb = "OK";
 String estadoFirmwareWeb = "Actualizado";
+bool otaEnProgreso = false; // Evita lanzar dos OTA simultáneas
 
 // --- DATOS PERSISTENTES PARA REINTENTOS Y RESPALDO ---
 float lastTemp = 0.0, lastHum = 0.0, lastPres = 0.0;
@@ -380,20 +381,86 @@ void mostrarBaileActualizacion(unsigned int progreso, unsigned int total) {
   }
 }
 
+// --- DESCARGA E INSTALACIÓN OTA (bloqueante, con watchdog controlado) ---
+t_httpUpdate_return descargarYActualizarFirmware(const String& urlFirmware) {
+  Serial.printf("Actualizando a: %s\n", urlFirmware.c_str());
+
+  httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+  httpUpdate.onStart([]() {
+    Serial.println("OTA: descarga iniciada");
+    mostrarBaileActualizacion(0, 1);
+  });
+  httpUpdate.onProgress([](int progreso, int total) {
+    mostrarBaileActualizacion(progreso, total);
+    // Si el watchdog siguiera activo (delete falló), evitar el reset durante la descarga:
+    esp_task_wdt_reset();
+  });
+  httpUpdate.onEnd([]() {
+    ledWifi.apagar();
+    ledSensor.apagar();
+    ledError.apagar();
+  });
+
+  WiFiClientSecure updateClient;
+  updateClient.setInsecure();
+
+  // La instalación es bloqueante y en redes lentas puede superar los 30 s del watchdog.
+  // Si el WDT disparara a mitad de la escritura en flash, el ESP32 se reinicia con la
+  // partición antigua intacta y la actualización "no se instala" sin dejar ningún error
+  // visible. Por eso retiramos la tarea del watchdog durante el proceso y la restauramos
+  // si el intento no termina reiniciando el sistema.
+  esp_err_t wdtErr = esp_task_wdt_delete(NULL);
+
+  t_httpUpdate_return resultado = httpUpdate.update(updateClient, urlFirmware);
+
+  if (wdtErr == ESP_OK) {
+    esp_task_wdt_add(NULL);
+  }
+
+  switch (resultado) {
+    case HTTP_UPDATE_OK:
+      // httpUpdate ya ejecuta ESP.restart() en este caso.
+      Serial.println("OTA: instalado correctamente. Reiniciando...");
+      break;
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("Fallo OTA: %s\n", httpUpdate.getLastErrorString().c_str());
+      estadoFirmwareWeb = "Error OTA";
+      ledWifi.pulsar(3000, 10);
+      ledSensor.apagar();
+      ledError.parpadear(200);
+      break;
+    default:
+      Serial.printf("OTA: resultado inesperado (%d)\n", (int)resultado);
+      break;
+  }
+  return resultado;
+}
+
 void comprobarActualizacionFirmware() {
+  if (otaEnProgreso) return;
   if (WiFi.status() != WL_CONNECTED) return;
+
+  otaEnProgreso = true;
+  Serial.println("--- Buscando actualizacion de firmware ---");
 
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
   http.setTimeout(15000);
-  http.begin(client, firmwareReleaseApi);
+  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+
+  if (!http.begin(client, firmwareReleaseApi)) {
+    Serial.println("No se pudo iniciar HTTP hacia la API de GitHub");
+    otaEnProgreso = false;
+    return;
+  }
   http.addHeader("User-Agent", "Estacion-Meteorologica-ESP32");
 
   int codigo = http.GET();
   if (codigo != HTTP_CODE_OK) {
     Serial.printf("No se pudo consultar firmware (%d)\n", codigo);
     http.end();
+    otaEnProgreso = false;
     return;
   }
 
@@ -403,40 +470,24 @@ void comprobarActualizacionFirmware() {
   String versionRemota = extraerJsonString(respuesta, "tag_name");
   if (versionRemota.isEmpty()) {
     Serial.println("Release sin tag de version");
+    otaEnProgreso = false;
     return;
   }
+
+  Serial.printf("Firmware local: %s, remoto: %s\n", firmwareVersion, versionRemota.c_str());
+  if (!versionNueva(versionRemota)) {
+    Serial.println("Sin version nueva disponible");
+    otaEnProgreso = false;
+    return;
+  }
+
+  estadoFirmwareWeb = "Actualizando...";
   String urlFirmware =
       "https://github.com/dgqgalaxy-create/Estacion_Meteorologica/releases/download/" +
       versionRemota + "/firmware.bin";
 
-  Serial.printf("Firmware local: %s, remoto: %s\n", firmwareVersion, versionRemota.c_str());
-  if (!versionNueva(versionRemota)) return;
-
-  Serial.printf("Actualizando a %s...\n", versionRemota.c_str());
-  estadoFirmwareWeb = "Actualizando...";
-  httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-  httpUpdate.onStart([]() {
-    mostrarBaileActualizacion(0, 1);
-  });
-  httpUpdate.onProgress([](int progreso, int total) {
-    mostrarBaileActualizacion(progreso, total);
-  });
-  httpUpdate.onEnd([]() {
-    ledWifi.apagar();
-    ledSensor.apagar();
-    ledError.apagar();
-  });
-  WiFiClientSecure updateClient;
-  updateClient.setInsecure();
-  t_httpUpdate_return resultado = httpUpdate.update(updateClient, urlFirmware);
-
-  if (resultado == HTTP_UPDATE_FAILED) {
-    Serial.printf("Fallo OTA: %s\n", httpUpdate.getLastErrorString().c_str());
-    estadoFirmwareWeb = "Error OTA";
-    ledWifi.pulsar(3000, 10);
-    ledSensor.apagar();
-    ledError.parpadear(200);
-  }
+  descargarYActualizarFirmware(urlFirmware);
+  otaEnProgreso = false;
 }
 
 void setup() {
