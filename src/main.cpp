@@ -21,7 +21,7 @@
 #include "WebHandler.h" 
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "1.0.1"
+#define FIRMWARE_VERSION "1.0.2"
 #endif
 
 const char* firmwareVersion = FIRMWARE_VERSION;
@@ -354,6 +354,26 @@ bool versionNueva(const String& remota) {
   return remotePatch > localPatch;
 }
 
+void mostrarBaileActualizacion(unsigned int progreso, unsigned int total) {
+  static int ultimoPaso = -1;
+  int paso = total == 0 ? 0 : (progreso * 4UL / total) % 4;
+  if (paso == ultimoPaso) return;
+  ultimoPaso = paso;
+
+  ledWifi.apagar();
+  ledSensor.apagar();
+  ledError.apagar();
+
+  if (paso == 0) ledWifi.encender();
+  if (paso == 1) ledSensor.encender();
+  if (paso == 2) ledError.encender();
+  if (paso == 3) {
+    ledWifi.encender();
+    ledSensor.encender();
+    ledError.encender();
+  }
+}
+
 void comprobarActualizacionFirmware() {
   if (WiFi.status() != WL_CONNECTED) return;
 
@@ -387,6 +407,17 @@ void comprobarActualizacionFirmware() {
 
   Serial.printf("Actualizando a %s...\n", versionRemota.c_str());
   estadoSheetsWeb = "Actualizando firmware...";
+  httpUpdate.onStart([]() {
+    mostrarBaileActualizacion(0, 1);
+  });
+  httpUpdate.onProgress([](int progreso, int total) {
+    mostrarBaileActualizacion(progreso, total);
+  });
+  httpUpdate.onEnd([]() {
+    ledWifi.apagar();
+    ledSensor.apagar();
+    ledError.apagar();
+  });
   WiFiClientSecure updateClient;
   updateClient.setInsecure();
   t_httpUpdate_return resultado = httpUpdate.update(updateClient, urlFirmware);
@@ -394,6 +425,9 @@ void comprobarActualizacionFirmware() {
   if (resultado == HTTP_UPDATE_FAILED) {
     Serial.printf("Fallo OTA: %s\n", httpUpdate.getLastErrorString().c_str());
     estadoSheetsWeb = "Error OTA";
+    ledWifi.pulsar(1000, 10);
+    ledSensor.apagar();
+    ledError.parpadear(200);
   }
 }
 

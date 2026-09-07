@@ -50,6 +50,7 @@ GPIO correspondiente. El parpadeo no bloquea el funcionamiento del equipo.
 | Error | 27 | Parpadeo rapido, cambio cada 100 ms | Lectura invalida o fallo temporal de un sensor |
 | Error | 27 | Parpadeo, cambio cada 200 ms | Se agotaron los reintentos de envio a Google Sheets |
 | Error | 27 | Apagado | Lectura valida y ultimo envio correcto, o no hay error activo |
+| WiFi, sensor y error | 12, 14, 27 | Secuencia: uno, otro, otro y los tres encendidos | Actualizacion OTA de firmware en curso |
 
 Durante un fallo temporal de sensor, si existe una lectura valida anterior, el
 panel muestra `Sensor recuperando` y conserva ese ultimo valor mientras el LED
@@ -197,9 +198,13 @@ que se cargo en el ESP32; no es la fecha de la ultima consulta a GitHub.
 
 El ESP32 no puede actualizarse por si mismo si nunca ha recibido un firmware
 con esta logica OTA. Por eso, cada dispositivo debe recibir una primera carga
-por USB con la version actual del proyecto (`1.0.0`), incluyendo su
+por USB con la version actual del proyecto (`1.0.2`), incluyendo su
 `include/config.h` local. Despues de esa carga, las siguientes versiones se
 pueden distribuir mediante GitHub Releases sin volver a conectar el USB.
+
+Durante una actualizacion OTA los LEDs ejecutan una secuencia de baile basada
+en el progreso de descarga: LED WiFi, LED sensor, LED de error y los tres
+juntos. Al terminar, el ESP32 reinicia con el firmware nuevo.
 
 Para publicar una version automatica:
 
