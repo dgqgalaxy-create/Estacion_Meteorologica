@@ -34,6 +34,17 @@ extern const char* firmwareVersion;
 extern const char* firmwareBuildDate;
 extern void comprobarActualizacionFirmware();
 
+extern String tendenciaEstadoWeb;
+extern float tendenciaActual;
+extern bool alertasEnabled;
+extern float alertaTempMax;
+extern float alertaTempMin;
+extern float alertaHumMax;
+extern float alertaHumMin;
+extern String alertaWeb;
+extern void guardarAlertas();
+extern int colaPendiente;
+
 // Plantilla HTML reutilizable (cargada una sola vez)
 String htmlTemplate;
 
@@ -77,6 +88,15 @@ void handleRoot() {
     html.replace("%ESTADO_SENSOR%", estadoSensorWeb);
     html.replace("%ESTADO_SHEETS%", estadoSheetsWeb);
     html.replace("%ESTADO_FIRMWARE%", estadoFirmwareWeb);
+
+    html.replace("%TENDENCIA%", tendenciaEstadoWeb);
+    html.replace("%ALERTA_CLASE%", alertaWeb == "Sin alertas" ? "dot-ok" : "dot-error");
+    html.replace("%ALERTA%", alertaWeb);
+    html.replace("%ALERTA_CHECK%", alertasEnabled ? "checked" : "");
+    html.replace("%ALERTA_TMAX%", String(alertaTempMax, 1));
+    html.replace("%ALERTA_TMIN%", String(alertaTempMin, 1));
+    html.replace("%ALERTA_HMAX%", String(alertaHumMax, 0));
+    html.replace("%ALERTA_HMIN%", String(alertaHumMin, 0));
     
     server.send(200, "text/html", html);
 }
@@ -92,6 +112,25 @@ void handleSetInterval() {
         unsigned long secs = server.arg("segundos").toInt();
         if (secs >= 5 && secs <= 3600) guardarIntervalo(secs * 1000);
     }
+    server.sendHeader("Location", "/");
+    server.send(303);
+}
+
+void handleSetAlerts() {
+    if (server.hasArg("on")) {
+        alertasEnabled = (server.arg("on") == "1" || server.arg("on") == "true" || server.arg("on") == "on" || server.arg("on") == "checked");
+    } else {
+        alertasEnabled = false;
+    }
+    if (server.hasArg("tmax")) alertaTempMax = server.arg("tmax").toFloat();
+    if (server.hasArg("tmin")) alertaTempMin = server.arg("tmin").toFloat();
+    if (server.hasArg("hmax")) alertaHumMax = server.arg("hmax").toFloat();
+    if (server.hasArg("hmin")) alertaHumMin = server.arg("hmin").toFloat();
+    alertaTempMax = constrain(alertaTempMax, -20.0f, 60.0f);
+    alertaTempMin = constrain(alertaTempMin, -20.0f, 60.0f);
+    alertaHumMax = constrain(alertaHumMax, 0.0f, 100.0f);
+    alertaHumMin = constrain(alertaHumMin, 0.0f, 100.0f);
+    guardarAlertas();
     server.sendHeader("Location", "/");
     server.send(303);
 }
@@ -150,6 +189,10 @@ void handleCurrentJson() {
   json += "\"estado\":\"" + String(sendToSheetsEnabled ? "ACTIVADO" : "PAUSADO") + "\"";
   json += ",\"version\":\"" + String(firmwareVersion) + "\"";
   json += ",\"actualizado\":\"" + String(firmwareBuildDate) + "\"";
+  json += ",\"tend\":\"" + tendenciaEstadoWeb + "\"";
+  json += ",\"trate\":" + String(tendenciaActual, 2);
+  json += ",\"alerta\":\"" + alertaWeb + "\"";
+  json += ",\"pendientes\":" + String(colaPendiente);
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -181,6 +224,7 @@ void setupWeb() {
     server.on("/", handleRoot);
     server.on("/toggle", handleToggle);
     server.on("/setinterval", handleSetInterval);
+    server.on("/setalerts", handleSetAlerts);
     server.on("/data.json", handleDataJson);
     server.on("/api/current", handleCurrentJson);
     server.on("/retry", handleRetry);

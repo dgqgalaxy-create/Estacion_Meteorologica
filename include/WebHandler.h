@@ -6,6 +6,7 @@ void setupWeb();
 void handleRoot();
 void handleToggle();
 void handleSetInterval();
+void handleSetAlerts();
 void handleRetry();
 void handleNotFound();
 

@@ -96,6 +96,23 @@ String eventosLog[LOG_EVENTOS_MAX];
 int eventosIdx = 0;
 int eventosCount = 0;
 
+// --- TENDENCIA DE PRESIÓN (anillo de muestras con época) ---
+const int RING_PRES_MAX = 512;
+time_t presTiempos[RING_PRES_MAX];
+float presValores[RING_PRES_MAX];
+int presN = 0;
+int presIdx = 0;
+float tendenciaActual = NAN;       // hPa por hora
+String tendenciaEstadoWeb = "--";
+
+// --- ALERTAS CONFIGURABLES (guardadas en NVS) ---
+bool alertasEnabled = false;
+float alertaTempMax = 35.0;
+float alertaTempMin = 0.0;
+float alertaHumMax = 85.0;
+float alertaHumMin = 15.0;
+String alertaWeb = "Sin alertas";
+
 // --- DATOS PERSISTENTES PARA REINTENTOS Y RESPALDO ---
 float lastTemp = 0.0, lastHum = 0.0, lastPres = 0.0;
 bool lecturaValida = false;
@@ -205,6 +222,79 @@ void actualizarRecords(float t, float h, float p) {
     if (h < humMin) humMin = h;
     if (p > presMax) presMax = p;
     if (p < presMin) presMin = p;
+}
+
+// --- TENDENCIA DE PRESIÓN ---
+// Variación en hPa/hora entre la muestra más reciente y otra con >= 20 min
+// de antigüedad (busca la primera que ya supere la ventana).
+float tendenciaPresionHora() {
+  if (presN < 2) return NAN;
+  int ultimo = (presIdx - 1 + RING_PRES_MAX) % RING_PRES_MAX;
+  time_t tUlt = presTiempos[ultimo];
+  float pUlt = presValores[ultimo];
+  for (int k = 0; k < presN; k++) {
+    int i = (presIdx - 1 - k + 2 * RING_PRES_MAX) % RING_PRES_MAX;
+    double dt = difftime(tUlt, presTiempos[i]);
+    if (dt >= 1200) { // 20 minutos
+      return (pUlt - presValores[i]) / (float)(dt / 3600.0);
+    }
+  }
+  return NAN;
+}
+
+void registrarMuestraPres(float p) {
+  if (!tiempoSincronizado()) return;
+  presTiempos[presIdx] = time(nullptr);
+  presValores[presIdx] = p;
+  presIdx = (presIdx + 1) % RING_PRES_MAX;
+  if (presN < RING_PRES_MAX) presN++;
+
+  tendenciaActual = tendenciaPresionHora();
+  if (isnan(tendenciaActual)) {
+    tendenciaEstadoWeb = "--";
+  } else if (tendenciaActual >= 0.30) {
+    tendenciaEstadoWeb = "Subiendo";
+  } else if (tendenciaActual <= -0.30) {
+    tendenciaEstadoWeb = "Bajando";
+  } else {
+    tendenciaEstadoWeb = "Estable";
+  }
+}
+
+// --- ALERTAS CONFIGURABLES ---
+void cargarAlertas() {
+  preferences.begin("alerts", true);
+  alertasEnabled = preferences.getBool("enabled", false);
+  alertaTempMax = preferences.getFloat("tmax", 35.0);
+  alertaTempMin = preferences.getFloat("tmin", 0.0);
+  alertaHumMax = preferences.getFloat("hmax", 85.0);
+  alertaHumMin = preferences.getFloat("hmin", 15.0);
+  preferences.end();
+}
+
+void guardarAlertas() {
+  preferences.begin("alerts", false);
+  preferences.putBool("enabled", alertasEnabled);
+  preferences.putFloat("tmax", alertaTempMax);
+  preferences.putFloat("tmin", alertaTempMin);
+  preferences.putFloat("hmax", alertaHumMax);
+  preferences.putFloat("hmin", alertaHumMin);
+  preferences.end();
+}
+
+void evaluarAlertas() {
+  String nueva = "Sin alertas";
+  if (alertasEnabled) {
+    if (temperature > alertaTempMax) nueva = "Temperatura alta (" + String(temperature, 1) + " C)";
+    else if (temperature < alertaTempMin) nueva = "Temperatura baja (" + String(temperature, 1) + " C)";
+    else if (humidity > alertaHumMax) nueva = "Humedad alta (" + String(humidity, 0) + " %)";
+    else if (humidity < alertaHumMin) nueva = "Humedad baja (" + String(humidity, 0) + " %)";
+  }
+  if (nueva != alertaWeb) {
+    if (nueva != "Sin alertas") registrarEvento("Alerta: " + nueva);
+    else registrarEvento("Alerta: condiciones normales");
+    alertaWeb = nueva;
+  }
 }
 
 // --- COLA OFFLINE DE LECTURAS (LittleFS) ---
@@ -424,6 +514,8 @@ void leerSensor() {
       verificarCambioDeDia();
       actualizarHistorial(temperature, humidity);
       actualizarRecords(temperature, humidity, pressure);
+      registrarMuestraPres(pressure);
+      evaluarAlertas();
 
       if (sensorEnError) {
         registrarEvento("Sensor: lectura recuperada");
@@ -670,6 +762,7 @@ void setup() {
   intervaloEnvio = preferences.getULong("intervalo", 10000);
   preferences.end();
 
+  cargarAlertas();
   inicializarFS();
 
   WiFiManager wm;

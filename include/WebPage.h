@@ -291,6 +291,12 @@ const char index_html[] PROGMEM = R"rawliteral(
                 </div>
 
                 <div class="metric-card">
+                    <i class='bx bx-trending-up metric-icon icon-pres'></i>
+                    <div class="metric-value" style="font-size:1.1rem"><span id="tendVal">%TENDENCIA%</span></div>
+                    <div class="metric-label">Tendencia Presion</div>
+                </div>
+
+                <div class="metric-card">
                     <i class='bx bxs-hot metric-icon icon-hi'></i>
                     <div class="metric-value" id="hiVal">%SENSACION%<small style="font-size:1rem">°C</small></div>
                     <div class="metric-label">Sensacion Termica</div>
@@ -366,6 +372,30 @@ const char index_html[] PROGMEM = R"rawliteral(
                 <span class="status-dot dot-ok"></span>
                 <span>Ultima actualizacion: <strong id="firmwareDate">%FIRMWARE_DATE%</strong></span>
             </div>
+        </div>
+
+        <!-- Alertas Configurables -->
+        <div class="glass-panel" style="border-left: 4px solid var(--danger);">
+            <h2 class="panel-title" style="color: var(--danger)"><i class='bx bx-bell'></i> Alertas</h2>
+            <div class="status-indicator">
+                <span class="status-dot dot-ok" id="dotAlerta"></span>
+                <span><strong id="alertaTexto">%ALERTA%</strong></span>
+            </div>
+            <form action="/setalerts" method="GET" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px;background:rgba(0,0,0,0.05);padding:8px 15px;border-radius:20px;">
+                <span style="font-size:0.85rem;font-weight:600;">Umbrales:</span>
+                <span style="font-size:0.8rem;">Temp &gt;</span>
+                <input type="number" step="0.1" name="tmax" value="%ALERTA_TMAX%" min="-20" max="60" style="width:60px;padding:4px;border-radius:6px;border:1px solid var(--card-border);background:transparent;color:var(--text-main);">
+                <span style="font-size:0.8rem;">&lt;</span>
+                <input type="number" step="0.1" name="tmin" value="%ALERTA_TMIN%" min="-20" max="60" style="width:60px;padding:4px;border-radius:6px;border:1px solid var(--card-border);background:transparent;color:var(--text-main);">
+                <span style="font-size:0.8rem;">Hum &gt;</span>
+                <input type="number" step="1" name="hmax" value="%ALERTA_HMAX%" min="0" max="100" style="width:60px;padding:4px;border-radius:6px;border:1px solid var(--card-border);background:transparent;color:var(--text-main);">
+                <span style="font-size:0.8rem;">&lt;</span>
+                <input type="number" step="1" name="hmin" value="%ALERTA_HMIN%" min="0" max="100" style="width:60px;padding:4px;border-radius:6px;border:1px solid var(--card-border);background:transparent;color:var(--text-main);">
+                <label style="font-size:0.85rem;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" name="on" value="1" %ALERTA_CHECK%> Activar
+                </label>
+                <button type="submit" class="btn btn-success" style="padding:6px 14px;font-size:0.8rem;"><i class='bx bx-save'></i> Guardar</button>
+            </form>
         </div>
 
         <!-- Grafico de Historial Continuo -->
@@ -535,6 +565,11 @@ const char index_html[] PROGMEM = R"rawliteral(
                 dotSheets.className = d.sheets === 'OK' ? 'status-dot dot-ok' : (d.sheets === 'Pausado' ? 'status-dot dot-warning' : 'status-dot dot-error');
                 const fwOk = (d.firmware === 'Actualizado' || d.firmware === 'Firmware comprobado');
                 dotFirmware.className = fwOk ? 'status-dot dot-ok' : (d.firmware === 'Actualizando...' ? 'status-dot dot-warning' : 'status-dot dot-error');
+
+                document.getElementById('tendVal').textContent = d.tend;
+                document.getElementById('alertaTexto').textContent = d.alerta;
+                const dotAlerta = document.getElementById('dotAlerta');
+                dotAlerta.className = d.alerta === 'Sin alertas' ? 'status-dot dot-ok' : 'status-dot dot-error';
             }).catch(e => console.error(e));
         }
 
