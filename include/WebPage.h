@@ -361,10 +361,6 @@ const char index_html[] PROGMEM = R"rawliteral(
                 <span>Google Sheets: <strong id="sheetsStatus">%ESTADO_SHEETS%</strong></span>
             </div>
             <div class="status-indicator">
-                <span class="status-dot dot-ok" id="dotFirmware"></span>
-                <span>OTA: <strong id="firmwareStatus">%ESTADO_FIRMWARE%</strong></span>
-            </div>
-            <div class="status-indicator">
                 <span class="status-dot dot-ok"></span>
                 <span>Firmware: <strong id="firmwareVersion">%FIRMWARE_VERSION%</strong></span>
             </div>
@@ -414,7 +410,6 @@ const char index_html[] PROGMEM = R"rawliteral(
                 <a href="/toggle" class="btn %TOGGLE_CLASS%">%TOGGLE_TEXT%</a>
                 <button class="btn btn-primary" onclick="window.location.reload()"><i class='bx bx-refresh'></i> Refrescar UI</button>
                 <a href="/retry" class="btn" style="background: var(--warning);"><i class='bx bx-refresh'></i> Reintentar Envio</a>
-                <a href="/checkupdate" class="btn btn-primary"><i class='bx bx-cloud-download'></i> Buscar actualizacion</a>
                 <form action="/setinterval" method="GET" style="display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.05); padding: 5px 15px; border-radius: 30px; margin:0;">
                     <label style="font-size:0.9rem; font-weight:600;">Intervalo (s):</label>
                     <input type="number" name="segundos" value="%INTERVALO_SEC%" min="5" style="width: 60px; padding: 5px; border-radius: 5px; border:1px solid var(--card-border); background: transparent; color: var(--text-main);">
@@ -559,7 +554,6 @@ const char index_html[] PROGMEM = R"rawliteral(
                 document.getElementById('wifiStatus').textContent = d.wifi;
                 document.getElementById('sensorStatus').textContent = d.sensor;
                 document.getElementById('sheetsStatus').textContent = d.sheets;
-                document.getElementById('firmwareStatus').textContent = d.firmware;
                 document.getElementById('horaWeb').textContent = d.hora;
                 document.getElementById('ipWeb').textContent = d.ip;
                 document.getElementById('rssiWeb').textContent = d.rssi;
@@ -570,13 +564,10 @@ const char index_html[] PROGMEM = R"rawliteral(
                 const dotWifi = document.getElementById('dotWifi');
                 const dotSensor = document.getElementById('dotSensor');
                 const dotSheets = document.getElementById('dotSheets');
-                const dotFirmware = document.getElementById('dotFirmware');
                 
                 dotWifi.className = d.wifi === 'Conectado' ? 'status-dot dot-ok' : 'status-dot dot-error';
                 dotSensor.className = d.sensor === 'OK' ? 'status-dot dot-ok' : 'status-dot dot-error';
                 dotSheets.className = d.sheets === 'OK' ? 'status-dot dot-ok' : (d.sheets === 'Pausado' ? 'status-dot dot-warning' : 'status-dot dot-error');
-                const fwOk = (d.firmware === 'Actualizado' || d.firmware === 'Firmware comprobado');
-                dotFirmware.className = fwOk ? 'status-dot dot-ok' : (d.firmware === 'Actualizando...' ? 'status-dot dot-warning' : 'status-dot dot-error');
 
                 document.getElementById('tendVal').textContent = d.tend;
                 document.getElementById('alertaTexto').textContent = d.alerta;

@@ -21,10 +21,11 @@ Apps Script.
 - Configuracion WiFi con WiFiManager.
 - Intervalo de lectura/envio configurable entre 5 y 3600 segundos.
 - Envio con reintentos a Google Sheets.
-- Auto-OTA desde GitHub Releases con verificacion SHA-256 del binario y
-  rollback automatico si el firmware nuevo no arranca.
-- Actualizacion de firmware por OTA clasica con el nombre `estacion-clima`.
-- Persistencia en NVS del intervalo de envio y de los umbrales de alerta.
+- URL de Google Sheets configurable desde el panel y persistida en NVS.
+- Actualizacion de firmware manual por WiFi (ArduinoOTA, nombre
+  `estacion-clima`) o por cable USB. No hay auto-actualizacion desde GitHub.
+- Persistencia en NVS del intervalo de envio, de los umbrales de alerta y de
+  la URL de Google Sheets.
 
 ## Hardware y conexiones
 
@@ -148,10 +149,9 @@ Desde el panel puedes:
 - Consultar maximos y minimos del dia.
 - Activar o pausar el envio a Google Sheets.
 - Configurar umbrales de alerta de temperatura y humedad.
-- Consultar por separado el estado de Google Sheets y de las actualizaciones OTA.
+- Configurar la URL de Google Sheets.
 - Cambiar el intervalo de lectura/envio entre 5 y 3600 segundos.
 - Forzar un reintento del ultimo envio.
-- Buscar manualmente nuevas versiones del firmware.
 - Ver una pagina de diagnostico (RAM, motivo de reinicio, WiFi, log de eventos).
 - Borrar las credenciales WiFi.
 
@@ -168,7 +168,6 @@ Desde el panel puedes:
 | `/setsheetsurl?url=...` | Guarda la URL de Google Sheets en NVS |
 | `/setalerts?...` | Guarda umbrales de alerta (`on`, `tmax`, `tmin`, `hmax`, `hmin`) |
 | `/retry` | Reintenta el ultimo envio |
-| `/checkupdate` | Consulta inmediatamente una nueva version del firmware |
 | `/resetwifi` | Borra la configuracion WiFi y reinicia |
 
 ## Google Sheets
@@ -188,8 +187,7 @@ y permite reintentarlo desde el panel.
 
 La URL del Apps Script se guarda en NVS y se puede cambiar desde el panel
 (`/setsheetsurl`); `include/config.h` solo se usa como valor inicial en el
-primer arranque. Asi, una actualizacion OTA (cuyo binario publico no contiene
-tu URL privada) no rompe el envio de los dispositivos ya configurados.
+primer arranque.
 
 Si el WiFi esta caido o un envio agota sus reintentos, la lectura se guarda en
 una cola offline (`/cola.csv` en LittleFS, hasta 200 lecturas) y se reenvia
@@ -197,70 +195,39 @@ automaticamente (5 por ciclo de 15 s) cuando hay conexion y el envio esta
 activado. El numero de lecturas pendientes se muestra en `/api/current` y en
 la pagina de diagnostico.
 
-## Actualizaciones OTA
+## Actualizacion del firmware
 
-El proyecto admite dos mecanismos OTA. Despues de la primera carga por USB, el
-dispositivo anuncia el servicio OTA con el nombre `estacion-clima`. Si
-PlatformIO lo detecta en la red, configura el puerto OTA en `platformio.ini` o
-ejecuta:
+Las actualizaciones son siempre manuales; el firmware no consulta ni descarga
+nada de Internet. Hay dos formas:
+
+### Por WiFi (ArduinoOTA)
+
+Despues de la primera carga por USB, el dispositivo anuncia el servicio OTA con
+el nombre `estacion-clima`. Con el dispositivo en la misma red:
 
 ```bash
-pio run -t upload --upload-port estacion-clima.local
+pio run -t upload
 ```
 
-Tambien puedes reemplazar el nombre por la IP local del ESP32 si mDNS no esta
-disponible.
+(PlatformIO usa `upload_protocol = espota` y `upload_port =
+estacion-clima.local`, ya configurados en `platformio.ini`). Si mDNS no
+resuelve, usa la IP local del ESP32:
 
-Ademas, cada seis horas el ESP32 consulta la ultima GitHub Release publica del
-repositorio. Si encuentra un tag semantico mayor que su version instalada,
-descarga el asset `firmware.bin`, verifica su SHA-256 contra el que publica la
-API de GitHub, lo instala en la particion OTA alternativa y reinicia. Si el
-hash no coincide, el binario se descarta y el firmware actual no se toca. La
-primera consulta se realiza aproximadamente un minuto despues del arranque.
+```bash
+pio run -t upload --upload-port 192.168.1.45
+```
 
-Tras instalar un OTA, el nuevo firmware se marca como "pendiente de
-confirmar": si arranca 3 veces sin confirmarse sano (WiFi conectado, sensores
-OK durante 90 s), el dispositivo vuelve automaticamente a la version anterior
-con `Update.rollBack()`.
+### Por cable USB
+
+Conecta el ESP32 por USB, descomenta `upload_protocol = esptool` y
+`upload_port = /dev/cu.usbserial-XXXX` en `platformio.ini` y ejecuta:
+
+```bash
+pio run -t upload
+```
 
 El panel muestra la version instalada y la fecha/hora de compilacion de ese
-firmware como **Ultima actualizacion**. Esta fecha corresponde a la compilacion
-que se cargo en el ESP32; no es la fecha de la ultima consulta a GitHub.
-
-### Primera instalacion de esta funcion
-
-El ESP32 no puede actualizarse por si mismo si nunca ha recibido un firmware
-con esta logica OTA. Por eso, cada dispositivo debe recibir una primera carga
-por USB con la version actual del proyecto (`1.1.5`), incluyendo su
-`include/config.h` local. Despues de esa carga, las siguientes versiones se
-pueden distribuir mediante GitHub Releases sin volver a conectar el USB.
-
-Durante una actualizacion OTA los LEDs ejecutan una secuencia de baile basada
-en el progreso de descarga: LED WiFi, LED sensor, LED de error y los tres
-juntos. Al terminar, el ESP32 reinicia con el firmware nuevo.
-
-Tambien puedes pulsar **Buscar actualizacion** en el panel para no esperar la
-consulta automatica. Si no hay una version nueva, el estado mostrara
-`Firmware comprobado`.
-
-Para publicar una version automatica:
-
-1. Cambia `firmwareVersion` en `src/main.cpp` y la version
-   `FIRMWARE_VERSION` de `platformio.ini` al mismo valor.
-2. Haz commit de los cambios.
-3. Crea y sube un tag:
-
-   ```bash
-   git tag v1.1.0
-   git push origin v1.1.0
-   ```
-
-GitHub Actions compilara el firmware y creara una release con `firmware.bin`.
-El repositorio debe ser publico para que el ESP32 pueda consultar la release y
-descargarla sin credenciales. La actualizacion usa HTTPS, pero el firmware no
-puede validar la cadena de certificados de GitHub de forma estricta porque los
-certificados pueden rotar; por eso se recomienda usar esta funcion solo con
-releases controladas y una red WiFi confiable.
+firmware como **Ultima actualizacion**.
 
 ## Estructura del proyecto
 

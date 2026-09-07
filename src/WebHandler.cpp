@@ -30,10 +30,8 @@ extern float humHistory[4][24];
 extern String estadoWifiWeb;
 extern String estadoSensorWeb;
 extern String estadoSheetsWeb;
-extern String estadoFirmwareWeb;
 extern const char* firmwareVersion;
 extern const char* firmwareBuildDate;
-extern void comprobarActualizacionFirmware();
 
 extern String tendenciaEstadoWeb;
 extern float tendenciaActual;
@@ -49,7 +47,6 @@ extern String obtenerFecha();
 extern String obtenerLogEventos();
 extern void guardarSheetsUrl(const String&);
 extern String obtenerSheetsUrl();
-extern String obtenerFaseOta();
 
 // Plantilla HTML reutilizable (cargada una sola vez)
 String htmlTemplate;
@@ -93,7 +90,6 @@ void handleRoot() {
     html.replace("%ESTADO_WIFI%", estadoWifiWeb);
     html.replace("%ESTADO_SENSOR%", estadoSensorWeb);
     html.replace("%ESTADO_SHEETS%", estadoSheetsWeb);
-    html.replace("%ESTADO_FIRMWARE%", estadoFirmwareWeb);
 
     html.replace("%TENDENCIA%", tendenciaEstadoWeb);
     html.replace("%ALERTA_CLASE%", alertaWeb == "Sin alertas" ? "dot-ok" : "dot-error");
@@ -196,7 +192,6 @@ void handleCurrentJson() {
   json += "\"wifi\":\"" + estadoWifiWeb + "\",";
   json += "\"sensor\":\"" + estadoSensorWeb + "\",";
   json += "\"sheets\":\"" + estadoSheetsWeb + "\",";
-  json += "\"firmware\":\"" + estadoFirmwareWeb + "\",";
   json += "\"hora\":\"" + obtenerHora() + "\",";
   json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
   json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
@@ -215,12 +210,6 @@ void handleCurrentJson() {
 void handleRetry() {
     extern void reintentarEnvioAhora();
     reintentarEnvioAhora();
-    server.sendHeader("Location", "/");
-    server.send(303);
-}
-
-void handleCheckUpdate() {
-    comprobarActualizacionFirmware();
     server.sendHeader("Location", "/");
     server.send(303);
 }
@@ -277,7 +266,6 @@ void handleDiagJson() {
     json += "\"flash\":" + String(ESP.getFlashChipSize()) + ",";
     json += "\"sdk\":\"" + String(ESP.getSdkVersion()) + "\",";
     json += "\"cpu\":" + String(ESP.getCpuFreqMHz()) + ",";
-    json += "\"otaFase\":\"" + obtenerFaseOta() + "\",";
     json += "\"log\":\"" + log + "\"";
     json += "}";
     server.send(200, "application/json", json);
@@ -295,7 +283,6 @@ void setupWeb() {
     server.on("/api/current", handleCurrentJson);
     server.on("/api/diag", handleDiagJson);
     server.on("/retry", handleRetry);
-    server.on("/checkupdate", handleCheckUpdate);
     server.on("/resetwifi", handleResetWifi);
     server.onNotFound(handleNotFound);
     server.begin();
