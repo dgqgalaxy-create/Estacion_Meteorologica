@@ -355,6 +355,10 @@ const char index_html[] PROGMEM = R"rawliteral(
                 <span>Google Sheets: <strong id="sheetsStatus">%ESTADO_SHEETS%</strong></span>
             </div>
             <div class="status-indicator">
+                <span class="status-dot dot-ok" id="dotFirmware"></span>
+                <span>OTA: <strong id="firmwareStatus">%ESTADO_FIRMWARE%</strong></span>
+            </div>
+            <div class="status-indicator">
                 <span class="status-dot dot-ok"></span>
                 <span>Firmware: <strong id="firmwareVersion">%FIRMWARE_VERSION%</strong></span>
             </div>
@@ -513,6 +517,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                 document.getElementById('wifiStatus').textContent = d.wifi;
                 document.getElementById('sensorStatus').textContent = d.sensor;
                 document.getElementById('sheetsStatus').textContent = d.sheets;
+                document.getElementById('firmwareStatus').textContent = d.firmware;
                 document.getElementById('horaWeb').textContent = d.hora;
                 document.getElementById('ipWeb').textContent = d.ip;
                 document.getElementById('rssiWeb').textContent = d.rssi;
@@ -523,10 +528,12 @@ const char index_html[] PROGMEM = R"rawliteral(
                 const dotWifi = document.getElementById('dotWifi');
                 const dotSensor = document.getElementById('dotSensor');
                 const dotSheets = document.getElementById('dotSheets');
+                const dotFirmware = document.getElementById('dotFirmware');
                 
                 dotWifi.className = d.wifi === 'Conectado' ? 'status-dot dot-ok' : 'status-dot dot-error';
                 dotSensor.className = d.sensor === 'OK' ? 'status-dot dot-ok' : 'status-dot dot-error';
                 dotSheets.className = d.sheets === 'OK' ? 'status-dot dot-ok' : (d.sheets === 'Pausado' ? 'status-dot dot-warning' : 'status-dot dot-error');
+                dotFirmware.className = d.firmware === 'Actualizado' ? 'status-dot dot-ok' : (d.firmware === 'Actualizando...' ? 'status-dot dot-warning' : 'status-dot dot-error');
             }).catch(e => console.error(e));
         }
 

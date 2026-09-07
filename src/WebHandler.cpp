@@ -29,6 +29,7 @@ extern float humHistory[4][25];
 extern String estadoWifiWeb;
 extern String estadoSensorWeb;
 extern String estadoSheetsWeb;
+extern String estadoFirmwareWeb;
 extern const char* firmwareVersion;
 extern const char* firmwareBuildDate;
 extern void comprobarActualizacionFirmware();
@@ -76,6 +77,7 @@ void handleRoot() {
     html.replace("%ESTADO_WIFI%", estadoWifiWeb);
     html.replace("%ESTADO_SENSOR%", estadoSensorWeb);
     html.replace("%ESTADO_SHEETS%", estadoSheetsWeb);
+    html.replace("%ESTADO_FIRMWARE%", estadoFirmwareWeb);
     
     server.send(200, "text/html", html);
 }
@@ -141,6 +143,7 @@ void handleCurrentJson() {
   json += "\"wifi\":\"" + estadoWifiWeb + "\",";
   json += "\"sensor\":\"" + estadoSensorWeb + "\",";
   json += "\"sheets\":\"" + estadoSheetsWeb + "\",";
+  json += "\"firmware\":\"" + estadoFirmwareWeb + "\",";
   json += "\"hora\":\"" + obtenerHora() + "\",";
   json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
   json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
@@ -161,8 +164,8 @@ void handleRetry() {
 
 void handleCheckUpdate() {
     comprobarActualizacionFirmware();
-    if (estadoSheetsWeb != "Actualizando firmware..." && estadoSheetsWeb != "Error OTA") {
-        estadoSheetsWeb = "Firmware comprobado";
+    if (estadoFirmwareWeb != "Actualizando..." && estadoFirmwareWeb != "Error OTA") {
+        estadoFirmwareWeb = "Actualizado";
     }
     server.sendHeader("Location", "/");
     server.send(303);

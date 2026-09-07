@@ -140,6 +140,7 @@ Desde el panel puedes:
   rocio.
 - Consultar maximos y minimos del dia.
 - Activar o pausar el envio a Google Sheets.
+- Consultar por separado el estado de Google Sheets y de las actualizaciones OTA.
 - Cambiar el intervalo de lectura/envio entre 5 y 3600 segundos.
 - Forzar un reintento del ultimo envio.
 - Buscar manualmente nuevas versiones del firmware.

@@ -21,7 +21,7 @@
 #include "WebHandler.h" 
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "1.0.3"
+#define FIRMWARE_VERSION "1.0.4"
 #endif
 
 const char* firmwareVersion = FIRMWARE_VERSION;
@@ -85,6 +85,7 @@ float envioTemp, envioHum, envioPres;
 String estadoWifiWeb = "Desconectado";
 String estadoSensorWeb = "OK";
 String estadoSheetsWeb = "OK";
+String estadoFirmwareWeb = "Actualizado";
 
 // --- DATOS PERSISTENTES PARA REINTENTOS Y RESPALDO ---
 float lastTemp = 0.0, lastHum = 0.0, lastPres = 0.0;
@@ -406,7 +407,7 @@ void comprobarActualizacionFirmware() {
   if (!versionNueva(versionRemota)) return;
 
   Serial.printf("Actualizando a %s...\n", versionRemota.c_str());
-  estadoSheetsWeb = "Actualizando firmware...";
+  estadoFirmwareWeb = "Actualizando...";
   httpUpdate.onStart([]() {
     mostrarBaileActualizacion(0, 1);
   });
@@ -424,7 +425,7 @@ void comprobarActualizacionFirmware() {
 
   if (resultado == HTTP_UPDATE_FAILED) {
     Serial.printf("Fallo OTA: %s\n", httpUpdate.getLastErrorString().c_str());
-    estadoSheetsWeb = "Error OTA";
+    estadoFirmwareWeb = "Error OTA";
     ledWifi.pulsar(1000, 10);
     ledSensor.apagar();
     ledError.parpadear(200);
