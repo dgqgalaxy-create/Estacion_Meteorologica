@@ -90,7 +90,8 @@ String estadoWifiWeb = "Desconectado";
 String estadoSensorWeb = "OK";
 String estadoSheetsWeb = "OK";
 String estadoFirmwareWeb = "Actualizado";
-bool otaEnProgreso = false; // Evita lanzar dos OTA simultáneas
+volatile bool otaTaskActiva = false; // La OTA corre en su propia tarea
+TaskHandle_t otaTaskHandle = NULL;
 bool otaNuevaPendiente = false; // True tras instalar un OTA, hasta arranque sano
 String otaUrlPendiente = "";
 String otaShaPendiente = "";
@@ -761,12 +762,12 @@ String obtenerFaseOta() {
   return f;
 }
 
-// --- DESCARGA E INSTALACIÓN OTA (bloqueante, con verificación SHA-256) ---
+// --- DESCARGA E INSTALACIÓN OTA (con verificación SHA-256) ---
 // Descarga el binario, calcula su SHA-256 mientras lo escribe en la partición
 // OTA alternativa y solo la activa si el hash coincide con el publicado por
-// GitHub. El watchdog de tarea se retira durante el proceso (en redes lentas
-// superaría los 30 s y reiniciaría a mitad de escritura). El búfer de lectura
-// vive en el heap para no agotar la pila del bucle dentro del handler web.
+// GitHub. Se ejecuta en su propia tarea (tareaOta) con pila amplia, así que el
+// watchdog del bucle sigue alimentándose y la web no se congela durante la
+// descarga. El búfer de lectura vive en el heap.
 void descargarYActualizarFirmware(const String& urlFirmware, const String& sha256Esperado) {
   registrarEvento("OTA: descarga iniciada");
   Serial.printf("Actualizando a: %s\n", urlFirmware.c_str());
@@ -823,7 +824,6 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
   anotarFaseOta("descarga:recibiendo");
 
   WiFiClient* tcp = http.getStreamPtr();
-  esp_err_t wdtErr = esp_task_wdt_delete(NULL);
 
   bool exito = false;
   String motivo = "desconocido";
@@ -840,7 +840,7 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
     while (escrito < (size_t)tam) {
       size_t n = tcp->read(buf, 4096);
       if (n == 0) { motivo = "descarga incompleta (corte de red)"; break; }
-      if (Update.write(buf, n) != n) { motivo = "error escribiendo en flash"; break; }
+      if (Update.write(buf, n) != n) { motivo = String(Update.errorString()); break; }
       mbedtls_sha256_update_ret(&ctx, buf, n);
       escrito += n;
       mostrarBaileActualizacion(escrito, tam);
@@ -863,7 +863,7 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
         anotarFaseOta("flash:activado");
         exito = true;
       } else {
-        motivo = "activacion de la particion";
+        motivo = String(Update.errorString());
         Update.abort();
       }
     } else {
@@ -876,9 +876,6 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
   }
 
   http.end();
-  if (wdtErr == ESP_OK) {
-    esp_task_wdt_add(NULL);
-  }
 
   if (exito) {
     marcarOtaPendiente();
@@ -899,6 +896,14 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
     ledSensor.apagar();
     ledError.parpadear(200);
   }
+}
+
+// La OTA corre en una tarea FreeRTOS con pila amplia para no comprometer la
+// pila del bucle ni bloquear el servidor web o el watchdog durante la descarga.
+void tareaOta(void* param) {
+  descargarYActualizarFirmware(otaUrlPendiente, otaShaPendiente);
+  otaTaskActiva = false;
+  vTaskDelete(NULL);
 }
 
 // Consulta la última release (función propia para que sus WiFiClientSecure /
@@ -956,14 +961,14 @@ bool consultarVersionRemota() {
 }
 
 void comprobarActualizacionFirmware() {
-  if (otaEnProgreso) return;
+  if (otaTaskActiva) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
-  otaEnProgreso = true;
   if (consultarVersionRemota()) {
-    descargarYActualizarFirmware(otaUrlPendiente, otaShaPendiente);
+    otaTaskActiva = true;
+    // Pila amplia y prioridad baja para no estorbar al bucle WiFi/web.
+    xTaskCreatePinnedToCore(tareaOta, "otaOta", 16384, NULL, 1, &otaTaskHandle, 1);
   }
-  otaEnProgreso = false;
 }
 
 void setup() {
