@@ -49,6 +49,7 @@ extern String obtenerFecha();
 extern String obtenerLogEventos();
 extern void guardarSheetsUrl(const String&);
 extern String obtenerSheetsUrl();
+extern String obtenerFaseOta();
 
 // Plantilla HTML reutilizable (cargada una sola vez)
 String htmlTemplate;
@@ -276,6 +277,7 @@ void handleDiagJson() {
     json += "\"flash\":" + String(ESP.getFlashChipSize()) + ",";
     json += "\"sdk\":\"" + String(ESP.getSdkVersion()) + "\",";
     json += "\"cpu\":" + String(ESP.getCpuFreqMHz()) + ",";
+    json += "\"otaFase\":\"" + obtenerFaseOta() + "\",";
     json += "\"log\":\"" + log + "\"";
     json += "}";
     server.send(200, "application/json", json);

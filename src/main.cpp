@@ -92,6 +92,8 @@ String estadoSheetsWeb = "OK";
 String estadoFirmwareWeb = "Actualizado";
 bool otaEnProgreso = false; // Evita lanzar dos OTA simultáneas
 bool otaNuevaPendiente = false; // True tras instalar un OTA, hasta arranque sano
+String otaUrlPendiente = "";
+String otaShaPendiente = "";
 
 // --- LOG DE EVENTOS EN RAM (últimos eventos para diagnóstico web) ---
 const int LOG_EVENTOS_MAX = 20;
@@ -744,19 +746,37 @@ String extraerSha256Asset(const String& json) {
   return json.substring(q, fin); // 64 caracteres hex
 }
 
+// Fase de la última OTA persistida en NVS: si el dispositivo hace panic a
+// mitad de la actualización, el siguiente arranque puede informar dónde falló.
+void anotarFaseOta(const char* fase) {
+  preferences.begin("ota", false);
+  preferences.putString("fase", fase);
+  preferences.end();
+}
+
+String obtenerFaseOta() {
+  preferences.begin("ota", true);
+  String f = preferences.getString("fase", "");
+  preferences.end();
+  return f;
+}
+
 // --- DESCARGA E INSTALACIÓN OTA (bloqueante, con verificación SHA-256) ---
 // Descarga el binario, calcula su SHA-256 mientras lo escribe en la partición
 // OTA alternativa y solo la activa si el hash coincide con el publicado por
 // GitHub. El watchdog de tarea se retira durante el proceso (en redes lentas
-// superaría los 30 s y reiniciaría a mitad de escritura).
+// superaría los 30 s y reiniciaría a mitad de escritura). El búfer de lectura
+// vive en el heap para no agotar la pila del bucle dentro del handler web.
 void descargarYActualizarFirmware(const String& urlFirmware, const String& sha256Esperado) {
   registrarEvento("OTA: descarga iniciada");
   Serial.printf("Actualizando a: %s\n", urlFirmware.c_str());
+  anotarFaseOta("descarga:inicio");
 
   if (sha256Esperado.length() != 64) {
     Serial.println("La release no expone el SHA-256 del asset; se aborta por seguridad.");
     estadoFirmwareWeb = "Error OTA";
     registrarEvento("OTA: release sin SHA-256");
+    anotarFaseOta("fallo:release-sin-sha256");
     ledError.parpadear(200);
     return;
   }
@@ -774,9 +794,11 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
     Serial.println("No se pudo iniciar la descarga");
     estadoFirmwareWeb = "Error OTA";
     registrarEvento("OTA: no se pudo iniciar la descarga");
+    anotarFaseOta("fallo:conectar-descarga");
     ledError.parpadear(200);
     return;
   }
+  anotarFaseOta("descarga:conectado");
 
   int codigo = http.GET();
   if (codigo != HTTP_CODE_OK) {
@@ -784,6 +806,7 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
     estadoFirmwareWeb = "Error OTA";
     registrarEvento("OTA: HTTP " + String(codigo) + " en la descarga");
     http.end();
+    anotarFaseOta("fallo:http-descarga");
     ledError.parpadear(200);
     return;
   }
@@ -793,31 +816,36 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
     estadoFirmwareWeb = "Error OTA";
     registrarEvento("OTA: sin Content-Length");
     http.end();
+    anotarFaseOta("fallo:sin-content-length");
     ledError.parpadear(200);
     return;
   }
+  anotarFaseOta("descarga:recibiendo");
 
   WiFiClient* tcp = http.getStreamPtr();
   esp_err_t wdtErr = esp_task_wdt_delete(NULL);
 
   bool exito = false;
   String motivo = "desconocido";
-
-  if (Update.begin(tam, U_FLASH)) {
+  uint8_t* buf = (uint8_t*)malloc(4096);
+  if (!buf) {
+    motivo = "sin memoria para el buffer";
+  } else if (Update.begin(tam, U_FLASH)) {
+    anotarFaseOta("flash:escribiendo");
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
     mbedtls_sha256_starts_ret(&ctx, 0);
 
     size_t escrito = 0;
-    uint8_t buf[4096];
     while (escrito < (size_t)tam) {
-      size_t n = tcp->read(buf, sizeof(buf));
+      size_t n = tcp->read(buf, 4096);
       if (n == 0) { motivo = "descarga incompleta (corte de red)"; break; }
       if (Update.write(buf, n) != n) { motivo = "error escribiendo en flash"; break; }
       mbedtls_sha256_update_ret(&ctx, buf, n);
       escrito += n;
       mostrarBaileActualizacion(escrito, tam);
     }
+    free(buf);
 
     if (escrito == (size_t)tam) {
       unsigned char hash[32];
@@ -832,6 +860,7 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
         registrarEvento("OTA: hash no coincide, firmware descartado");
         Update.abort();
       } else if (Update.end()) {
+        anotarFaseOta("flash:activado");
         exito = true;
       } else {
         motivo = "activacion de la particion";
@@ -843,6 +872,7 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
     mbedtls_sha256_free(&ctx);
   } else {
     motivo = "sin espacio en particion OTA";
+    free(buf);
   }
 
   http.end();
@@ -852,6 +882,7 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
 
   if (exito) {
     marcarOtaPendiente();
+    anotarFaseOta("ok");
     Serial.println("OTA: firmware verificado e instalado. Reiniciando...");
     registrarEvento("OTA: instalado y verificado, reiniciando");
     ledWifi.apagar();
@@ -863,17 +894,16 @@ void descargarYActualizarFirmware(const String& urlFirmware, const String& sha25
     Serial.printf("Fallo OTA: %s\n", motivo.c_str());
     estadoFirmwareWeb = "Error OTA";
     registrarEvento("OTA: fallo - " + motivo);
+    anotarFaseOta(motivo.c_str());
     ledWifi.pulsar(3000, 10);
     ledSensor.apagar();
     ledError.parpadear(200);
   }
 }
 
-void comprobarActualizacionFirmware() {
-  if (otaEnProgreso) return;
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  otaEnProgreso = true;
+// Consulta la última release (función propia para que sus WiFiClientSecure /
+// HTTPClient locales se liberen antes de la descarga y no agoten la pila).
+bool consultarVersionRemota() {
   registrarEvento("OTA: buscando actualizacion");
   Serial.println("--- Buscando actualizacion de firmware ---");
 
@@ -886,8 +916,7 @@ void comprobarActualizacionFirmware() {
   if (!http.begin(client, firmwareReleaseApi)) {
     Serial.println("No se pudo iniciar HTTP hacia la API de GitHub");
     estadoFirmwareWeb = "Error consulta";
-    otaEnProgreso = false;
-    return;
+    return false;
   }
   http.addHeader("User-Agent", "Estacion-Meteorologica-ESP32");
 
@@ -897,8 +926,7 @@ void comprobarActualizacionFirmware() {
     estadoFirmwareWeb = "Error consulta";
     registrarEvento("OTA: error consultando GitHub (" + String(codigo) + ")");
     http.end();
-    otaEnProgreso = false;
-    return;
+    return false;
   }
 
   String respuesta = http.getString();
@@ -908,8 +936,7 @@ void comprobarActualizacionFirmware() {
   if (versionRemota.isEmpty()) {
     Serial.println("Release sin tag de version");
     estadoFirmwareWeb = "Error consulta";
-    otaEnProgreso = false;
-    return;
+    return false;
   }
 
   Serial.printf("Firmware local: %s, remoto: %s\n", firmwareVersion, versionRemota.c_str());
@@ -917,17 +944,25 @@ void comprobarActualizacionFirmware() {
     Serial.println("Sin version nueva disponible");
     estadoFirmwareWeb = "Firmware comprobado";
     registrarEvento("OTA: comprobado, sin version nueva");
-    otaEnProgreso = false;
-    return;
+    return false;
   }
 
   estadoFirmwareWeb = "Actualizando...";
-  String urlFirmware =
+  otaUrlPendiente =
       "https://github.com/dgqgalaxy-create/Estacion_Meteorologica/releases/download/" +
       versionRemota + "/firmware.bin";
-  String shaEsperado = extraerSha256Asset(respuesta);
+  otaShaPendiente = extraerSha256Asset(respuesta);
+  return true;
+}
 
-  descargarYActualizarFirmware(urlFirmware, shaEsperado);
+void comprobarActualizacionFirmware() {
+  if (otaEnProgreso) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  otaEnProgreso = true;
+  if (consultarVersionRemota()) {
+    descargarYActualizarFirmware(otaUrlPendiente, otaShaPendiente);
+  }
   otaEnProgreso = false;
 }
 
