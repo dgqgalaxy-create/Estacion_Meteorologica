@@ -31,6 +31,7 @@ extern String estadoSensorWeb;
 extern String estadoSheetsWeb;
 extern const char* firmwareVersion;
 extern const char* firmwareBuildDate;
+extern void comprobarActualizacionFirmware();
 
 // Plantilla HTML reutilizable (cargada una sola vez)
 String htmlTemplate;
@@ -158,6 +159,15 @@ void handleRetry() {
     server.send(303);
 }
 
+void handleCheckUpdate() {
+    comprobarActualizacionFirmware();
+    if (estadoSheetsWeb != "Actualizando firmware..." && estadoSheetsWeb != "Error OTA") {
+        estadoSheetsWeb = "Firmware comprobado";
+    }
+    server.sendHeader("Location", "/");
+    server.send(303);
+}
+
 void handleResetWifi() {
     WiFiManager wm;
     server.send(200, "text/html", "<h1>Borrando WiFi...</h1>");
@@ -175,6 +185,7 @@ void setupWeb() {
     server.on("/data.json", handleDataJson);
     server.on("/api/current", handleCurrentJson);
     server.on("/retry", handleRetry);
+    server.on("/checkupdate", handleCheckUpdate);
     server.on("/resetwifi", handleResetWifi);
     server.onNotFound(handleNotFound);
     server.begin();

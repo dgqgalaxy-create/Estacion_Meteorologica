@@ -142,6 +142,7 @@ Desde el panel puedes:
 - Activar o pausar el envio a Google Sheets.
 - Cambiar el intervalo de lectura/envio entre 5 y 3600 segundos.
 - Forzar un reintento del ultimo envio.
+- Buscar manualmente nuevas versiones del firmware.
 - Borrar las credenciales WiFi.
 
 ### Endpoints
@@ -154,6 +155,7 @@ Desde el panel puedes:
 | `/toggle` | Activa o pausa el envio |
 | `/setinterval?segundos=30` | Guarda un nuevo intervalo |
 | `/retry` | Reintenta el ultimo envio |
+| `/checkupdate` | Consulta inmediatamente una nueva version del firmware |
 | `/resetwifi` | Borra la configuracion WiFi y reinicia |
 
 ## Google Sheets
@@ -205,6 +207,10 @@ pueden distribuir mediante GitHub Releases sin volver a conectar el USB.
 Durante una actualizacion OTA los LEDs ejecutan una secuencia de baile basada
 en el progreso de descarga: LED WiFi, LED sensor, LED de error y los tres
 juntos. Al terminar, el ESP32 reinicia con el firmware nuevo.
+
+Tambien puedes pulsar **Buscar actualizacion** en el panel para no esperar la
+consulta automatica. Si no hay una version nueva, el estado mostrara
+`Firmware comprobado`.
 
 Para publicar una version automatica:
 

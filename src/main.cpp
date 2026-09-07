@@ -21,7 +21,7 @@
 #include "WebHandler.h" 
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "1.0.2"
+#define FIRMWARE_VERSION "1.0.3"
 #endif
 
 const char* firmwareVersion = FIRMWARE_VERSION;
