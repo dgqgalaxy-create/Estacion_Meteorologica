@@ -412,7 +412,12 @@ const char index_html[] PROGMEM = R"rawliteral(
                 <a href="/retry" class="btn" style="background: var(--warning);"><i class='bx bx-refresh'></i> Reintentar Envio</a>
                 <form action="/setinterval" method="GET" style="display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.05); padding: 5px 15px; border-radius: 30px; margin:0;">
                     <label style="font-size:0.9rem; font-weight:600;">Intervalo (s):</label>
-                    <input type="number" name="segundos" value="%INTERVALO_SEC%" min="5" style="width: 60px; padding: 5px; border-radius: 5px; border:1px solid var(--card-border); background: transparent; color: var(--text-main);">
+                    <input type="number" name="segundos" value="%INTERVALO_SEC%" min="5" max="86400" step="1" title="Entre 5 y 86400 segundos (hasta 24 horas)" style="width: 80px; padding: 5px; border-radius: 5px; border:1px solid var(--card-border); background: transparent; color: var(--text-main);">
+                    <button type="submit" class="btn btn-success" style="padding: 6px 12px; font-size: 0.8rem;"><i class='bx bx-save'></i></button>
+                </form>
+                <form action="/settimezone" method="GET" style="display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.05); padding: 5px 15px; border-radius: 30px; margin:0;">
+                    <label style="font-size:0.9rem; font-weight:600;">Zona horaria (UTC):</label>
+                    <input type="number" step="0.5" name="horas" value="%GMT_OFFSET%" min="-12" max="14" title="Diferencia con UTC en horas (ej: -6 para UTC-6)" style="width: 70px; padding: 5px; border-radius: 5px; border:1px solid var(--card-border); background: transparent; color: var(--text-main);">
                     <button type="submit" class="btn btn-success" style="padding: 6px 12px; font-size: 0.8rem;"><i class='bx bx-save'></i></button>
                 </form>
                 <a href="/resetwifi" class="btn btn-danger" onclick="return confirm('¿Borrar credenciales WiFi?')"><i class='bx bx-wifi-off'></i> Reset WiFi</a>
@@ -588,6 +593,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                     pad('WiFi', d.ssid + ' ch ' + d.canal + ' (' + d.rssi + ' dBm)'),
                     pad('MAC', d.mac),
                     pad('Intervalo', d.intervalo + ' s  Enviar: ' + (d.enviar ? 'ON' : 'OFF')),
+                    pad('Zona horaria', 'UTC ' + d.gmt + ' h'),
                     pad('Cola pendiente', d.pendientes),
                     pad('Flash', d.flash + ' B  sketch ' + d.sketch + ' / libre ' + d.sketchLibre),
                     pad('CPU / SDK', d.cpu + ' MHz  ' + d.sdk),

@@ -57,8 +57,8 @@ bool sendToSheetsEnabled = true;
 unsigned long intervaloEnvio = 10000;
 
 const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = -21600;
-const int   daylightOffset_sec = 0;
+long        gmtOffset_sec = -21600;   // Offset UTC en segundos (configurable desde el panel web)
+const int   daylightOffset_sec = 0;   // Sin horario de verano automático
 
 float tempHistory[4][24]; 
 float humHistory[4][24];  
@@ -208,6 +208,23 @@ void guardarIntervalo(unsigned long nuevoIntervalo) {
   preferences.putULong("intervalo", nuevoIntervalo);
   preferences.end();
   intervaloEnvio = nuevoIntervalo;
+}
+
+// --- ZONA HORARIA (persistida en NVS, configurable desde el panel) ---
+void cargarZonaHoraria() {
+  preferences.begin("tz", true);
+  gmtOffset_sec = preferences.getLong("offset", -21600);
+  preferences.end();
+}
+
+void guardarZonaHoraria(long offsetSeg) {
+  preferences.begin("tz", false);
+  preferences.putLong("offset", offsetSeg);
+  preferences.end();
+  gmtOffset_sec = offsetSeg;
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  registrarEvento("Zona horaria: UTC " + String(offsetSeg >= 0 ? "+" : "") +
+                  String(offsetSeg / 3600.0, 1) + " h");
 }
 
 void guardarSheetsUrl(const String& url) {
@@ -606,6 +623,7 @@ void configModeCallback (WiFiManager *myWiFiManager) {
 
 void configurarOTA() {
   ArduinoOTA.setHostname("estacion-clima");
+  ArduinoOTA.setPassword(WEB_PASSWORD);   // Contraseña definida en include/config.h
   ArduinoOTA.begin();
   MDNS.begin("estacion-clima");
 }
@@ -638,6 +656,7 @@ void setup() {
   }
 
   cargarAlertas();
+  cargarZonaHoraria();
   inicializarFS();
 
   WiFiManager wm;

@@ -4,7 +4,8 @@
 #include <WiFiManager.h>
 #include <esp_system.h>
 #include <math.h>
-#include "WebPage.h" 
+#include "WebPage.h"
+#include "config.h"
 
 extern WebServer server;
 extern float temperature;
@@ -48,10 +49,23 @@ extern String obtenerLogEventos();
 extern void guardarSheetsUrl(const String&);
 extern String obtenerSheetsUrl();
 
+extern long gmtOffset_sec;
+extern void guardarZonaHoraria(long);
+
 // Plantilla HTML reutilizable (cargada una sola vez)
 String htmlTemplate;
 
+// --- AUTENTICACION BASICA DEL PANEL ---
+// Credenciales en include/config.h (WEB_USERNAME / WEB_PASSWORD).
+bool requiereAuth() {
+    if (server.authenticate(WEB_USERNAME, WEB_PASSWORD)) return true;
+    server.requestAuthentication(BASIC_AUTH, "estacion-clima", "Acceso denegado");
+    return false;
+}
+
 void handleRoot() {
+    if (!requiereAuth()) return;
+
     if (htmlTemplate.length() == 0) {
         htmlTemplate = index_html;
         htmlTemplate.reserve(htmlTemplate.length() + 200);
@@ -79,6 +93,7 @@ void handleRoot() {
     String status = sendToSheetsEnabled ? "ACTIVADO" : "PAUSADO";
     html.replace("%ESTADO%", status);
     html.replace("%INTERVALO_SEC%", String(intervaloEnvio / 1000));
+    html.replace("%GMT_OFFSET%", String(gmtOffset_sec / 3600.0, 1));
     html.replace("%TOGGLE_TEXT%", sendToSheetsEnabled ? "<i class='bx bx-pause-circle'></i> Pausar Envío" : "<i class='bx bx-play-circle'></i> Reanudar Envío");
     html.replace("%TOGGLE_CLASS%", sendToSheetsEnabled ? "btn-danger" : "btn-success");
     html.replace("%IP%", WiFi.localIP().toString());
@@ -105,21 +120,38 @@ void handleRoot() {
 }
 
 void handleToggle() {
+    if (!requiereAuth()) return;
     sendToSheetsEnabled = !sendToSheetsEnabled;
     server.sendHeader("Location", "/");
     server.send(303);
 }
 
 void handleSetInterval() {
+    if (!requiereAuth()) return;
     if (server.hasArg("segundos")) {
-        unsigned long secs = server.arg("segundos").toInt();
-        if (secs >= 5 && secs <= 3600) guardarIntervalo(secs * 1000);
+        long secs = server.arg("segundos").toInt();
+        // Rango flexible: de 5 s a 24 h (86400 s). Unidad = segundos.
+        if (secs >= 5 && secs <= 86400) guardarIntervalo((unsigned long)secs * 1000UL);
+    }
+    server.sendHeader("Location", "/");
+    server.send(303);
+}
+
+void handleSetTimezone() {
+    if (!requiereAuth()) return;
+    if (server.hasArg("horas")) {
+        float horas = server.arg("horas").toFloat();
+        // Diferencia con UTC en horas; se guarda en segundos en NVS.
+        if (horas >= -12.0f && horas <= 14.0f) {
+            guardarZonaHoraria(lroundf(horas * 3600.0f));
+        }
     }
     server.sendHeader("Location", "/");
     server.send(303);
 }
 
 void handleSetSheetsUrl() {
+    if (!requiereAuth()) return;
     if (server.hasArg("url")) {
         guardarSheetsUrl(server.arg("url"));
     }
@@ -128,6 +160,7 @@ void handleSetSheetsUrl() {
 }
 
 void handleSetAlerts() {
+    if (!requiereAuth()) return;
     if (server.hasArg("on")) {
         alertasEnabled = (server.arg("on") == "1" || server.arg("on") == "true" || server.arg("on") == "on" || server.arg("on") == "checked");
     } else {
@@ -147,6 +180,8 @@ void handleSetAlerts() {
 }
 
 void handleDataJson() {
+    if (!requiereAuth()) return;
+
   String json;
   json.reserve(4000); // Reserva suficiente para evitar fragmentación
   
@@ -174,6 +209,8 @@ void handleDataJson() {
 }
 
 void handleCurrentJson() {
+    if (!requiereAuth()) return;
+
   String json;
   json.reserve(600);
   json = "{";
@@ -203,11 +240,13 @@ void handleCurrentJson() {
   json += ",\"trate\":" + String(isnan(tendenciaActual) ? "null" : String(tendenciaActual, 2));
   json += ",\"alerta\":\"" + alertaWeb + "\"";
   json += ",\"pendientes\":" + String(colaPendiente);
+  json += ",\"gmt\":" + String(gmtOffset_sec / 3600.0, 1);
   json += "}";
   server.send(200, "application/json", json);
 }
 
 void handleRetry() {
+    if (!requiereAuth()) return;
     extern void reintentarEnvioAhora();
     reintentarEnvioAhora();
     server.sendHeader("Location", "/");
@@ -215,6 +254,7 @@ void handleRetry() {
 }
 
 void handleResetWifi() {
+    if (!requiereAuth()) return;
     WiFiManager wm;
     server.send(200, "text/html", "<h1>Borrando WiFi...</h1>");
     delay(1000);
@@ -239,6 +279,8 @@ String razonResetTexto() {
 }
 
 void handleDiagJson() {
+    if (!requiereAuth()) return;
+
     String log = obtenerLogEventos();
     log.replace("\n", " | ");
 
@@ -266,6 +308,7 @@ void handleDiagJson() {
     json += "\"flash\":" + String(ESP.getFlashChipSize()) + ",";
     json += "\"sdk\":\"" + String(ESP.getSdkVersion()) + "\",";
     json += "\"cpu\":" + String(ESP.getCpuFreqMHz()) + ",";
+    json += "\"gmt\":" + String(gmtOffset_sec / 3600.0, 1) + ",";
     json += "\"log\":\"" + log + "\"";
     json += "}";
     server.send(200, "application/json", json);
@@ -277,6 +320,7 @@ void setupWeb() {
     server.on("/", handleRoot);
     server.on("/toggle", handleToggle);
     server.on("/setinterval", handleSetInterval);
+    server.on("/settimezone", handleSetTimezone);
     server.on("/setsheetsurl", handleSetSheetsUrl);
     server.on("/setalerts", handleSetAlerts);
     server.on("/data.json", handleDataJson);

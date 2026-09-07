@@ -19,13 +19,16 @@ Apps Script.
   diagnostico (RAM, reinicios, motivo de reset, log de eventos).
 - Actualizacion automatica del panel mediante `/api/current` y `/data.json`.
 - Configuracion WiFi con WiFiManager.
-- Intervalo de lectura/envio configurable entre 5 y 3600 segundos.
+- Intervalo de lectura/envio configurable entre 5 y 86400 segundos (hasta 24 horas).
 - Envio con reintentos a Google Sheets.
 - URL de Google Sheets configurable desde el panel y persistida en NVS.
-- Actualizacion de firmware manual por WiFi (ArduinoOTA, nombre
-  `estacion-clima`) o por cable USB. No hay auto-actualizacion desde GitHub.
-- Persistencia en NVS del intervalo de envio, de los umbrales de alerta y de
-  la URL de Google Sheets.
+- Actualizacion de firmware manual por WiFi (ArduinoOTA con contrasena,
+  nombre `estacion-clima`) o por cable USB. No hay auto-actualizacion desde
+  GitHub.
+- Panel web y actualizacion OTA protegidos con usuario y contrasena.
+- Zona horaria configurable desde el panel (persistida en NVS).
+- Persistencia en NVS del intervalo de envio, de los umbrales de alerta, de la
+  zona horaria y de la URL de Google Sheets.
 
 ## Hardware y conexiones
 
@@ -81,22 +84,29 @@ de error parpadea. Al recuperar una lectura correcta, el LED de error se apaga.
    cd Estacion_Meteorologica
    ```
 
-2. Crea `include/config.h`. Este archivo esta excluido de Git porque puede
-   contener la URL privada del Google Apps Script:
+2. Crea `include/config.h`. Este archivo esta excluido de Git porque contiene
+   la URL privada del Google Apps Script y las credenciales de acceso:
 
    ```cpp
    #ifndef CONFIG_H
    #define CONFIG_H
 
-   const char* GOOGLE_SCRIPT_URL =
-       "https://script.google.com/macros/s/TU_ID/exec";
+   // URL del despliegue de Google Apps Script (sustituye TU_ID por tu ID real).
+   #define GOOGLE_SCRIPT_URL "https://script.google.com/macros/s/TU_ID/exec"
+
+   // Credenciales del panel web y de la actualizacion OTA.
+   // WEB_PASSWORD debe coincidir con `upload_flags = --auth=...`
+   // de platformio.ini.
+   #define WEB_USERNAME "admin"
+   #define WEB_PASSWORD "04330"
 
    #endif
    ```
 
-   Sustituye `TU_ID` por la URL de tu despliegue de Google Apps Script. Si no
-   vas a usar Google Sheets, conserva una URL valida o desactiva el envio
-   desde el panel web despues de iniciar el dispositivo.
+   Sustituye `TU_ID` por la URL de tu despliegue de Google Apps Script y cambia
+   las credenciales si lo deseas. Si no vas a usar Google Sheets, conserva una
+   URL valida o desactiva el envio desde el panel web despues de iniciar el
+   dispositivo.
 
 3. Compila el proyecto. PlatformIO descargara automaticamente las
    dependencias declaradas en `platformio.ini`:
@@ -105,10 +115,11 @@ de error parpadea. Al recuperar una lectura correcta, el LED de error se apaga.
    pio run
    ```
 
-4. Conecta el ESP32 por USB y realiza la primera carga:
+4. Conecta el ESP32 por USB, ajusta el `upload_port` del entorno `[env:usb]`
+   en `platformio.ini` y realiza la primera carga por cable:
 
    ```bash
-   pio run -t upload
+   pio run -e usb -t upload
    ```
 
 5. Abre el monitor serie a 115200 baudios:
@@ -128,7 +139,8 @@ guardan en el ESP32. Para borrarlas, usa el boton **Reset WiFi** del panel web
 o elimina las credenciales y reinicia el dispositivo.
 
 Cuando la conexion es correcta, el dispositivo configura NTP usando
-`pool.ntp.org` y la zona horaria UTC-6 sin horario de verano.
+`pool.ntp.org` y la zona horaria guardada (UTC-6 por defecto, ajustable desde
+el panel web).
 
 ## Uso del panel web
 
@@ -150,7 +162,8 @@ Desde el panel puedes:
 - Activar o pausar el envio a Google Sheets.
 - Configurar umbrales de alerta de temperatura y humedad.
 - Configurar la URL de Google Sheets.
-- Cambiar el intervalo de lectura/envio entre 5 y 3600 segundos.
+- Cambiar el intervalo de lectura/envio entre 5 y 86400 segundos (hasta 24 horas).
+- Cambiar la zona horaria (diferencia con UTC en horas).
 - Forzar un reintento del ultimo envio.
 - Ver una pagina de diagnostico (RAM, motivo de reinicio, WiFi, log de eventos).
 - Borrar las credenciales WiFi.
@@ -165,6 +178,7 @@ Desde el panel puedes:
 | `/data.json` | Historial de temperatura y humedad |
 | `/toggle` | Activa o pausa el envio |
 | `/setinterval?segundos=30` | Guarda un nuevo intervalo |
+| `/settimezone?horas=-6` | Guarda la zona horaria (diferencia con UTC en horas) |
 | `/setsheetsurl?url=...` | Guarda la URL de Google Sheets en NVS |
 | `/setalerts?...` | Guarda umbrales de alerta (`on`, `tmax`, `tmin`, `hmax`, `hmin`) |
 | `/retry` | Reintenta el ultimo envio |
@@ -209,9 +223,10 @@ el nombre `estacion-clima`. Con el dispositivo en la misma red:
 pio run -t upload
 ```
 
-(PlatformIO usa `upload_protocol = espota` y `upload_port =
-estacion-clima.local`, ya configurados en `platformio.ini`). Si mDNS no
-resuelve, usa la IP local del ESP32:
+(PlatformIO usa el entorno `[env:esp32dev]` con `upload_protocol = espota`,
+`upload_port = estacion-clima.local` y la contrasena en
+`upload_flags = --auth=...`; todo ya configurado en `platformio.ini`). Si mDNS
+no resuelve, usa la IP local del ESP32:
 
 ```bash
 pio run -t upload --upload-port 192.168.1.45
@@ -219,11 +234,11 @@ pio run -t upload --upload-port 192.168.1.45
 
 ### Por cable USB
 
-Conecta el ESP32 por USB, descomenta `upload_protocol = esptool` y
-`upload_port = /dev/cu.usbserial-XXXX` en `platformio.ini` y ejecuta:
+Conecta el ESP32 por USB, ajusta `upload_port` del entorno `[env:usb]` en
+`platformio.ini` y ejecuta:
 
 ```bash
-pio run -t upload
+pio run -e usb -t upload
 ```
 
 El panel muestra la version instalada y la fecha/hora de compilacion de ese
@@ -246,8 +261,8 @@ platformio.ini      Placa, framework y dependencias
 ## Funcionamiento interno
 
 Al arrancar, el firmware inicializa el bus I2C y ambos sensores, recupera el
-intervalo guardado, conecta el WiFi y configura NTP, OTA y el servidor web.
-Despues realiza una lectura inmediata.
+intervalo y la zona horaria guardados, conecta el WiFi y configura NTP, OTA y
+el servidor web. Despues realiza una lectura inmediata.
 
 En el ciclo principal atiende peticiones HTTP y OTA, mantiene los LEDs,
 reconecta el WiFi y procesa el estado de los envios. Cuando vence el intervalo
@@ -256,14 +271,19 @@ registros, y comienza el envio a Google Sheets. Las lecturas validas se
 conservan como respaldo si un sensor falla temporalmente.
 
 El historial y los maximos/minimos viven en memoria RAM y se reinician al
-reiniciar el ESP32. Persisten en NVS el intervalo de envio y los umbrales de
-alerta; en LittleFS persiste la cola de lecturas pendientes de Google Sheets.
+reiniciar el ESP32. Persisten en NVS el intervalo de envio, la zona horaria y
+los umbrales de alerta; en LittleFS persiste la cola de lecturas pendientes de
+Google Sheets.
 
 ## Seguridad y notas
 
-- No publiques `include/config.h`; esta incluido en `.gitignore`.
-- La interfaz web no tiene autenticacion. Usala dentro de una red confiable y
-  evita exponer el puerto 80 directamente a Internet.
+- No publiques `include/config.h`; esta incluido en `.gitignore` y contiene la
+  URL de Google Sheets y las credenciales de acceso.
+- El panel web y la actualizacion OTA piden usuario y contrasena
+  (`WEB_USERNAME` / `WEB_PASSWORD` en `include/config.h`). La contrasena de OTA
+  debe coincidir con `upload_flags = --auth=...` de `platformio.ini`.
+- La autenticacion web usa Basic Auth sobre HTTP; es adecuada para una red
+  local de confianza. Evita exponer el puerto 80 directamente a Internet.
 - La interfaz carga Chart.js, Boxicons y la fuente Inter desde CDN; para ver
   todos los elementos visuales el navegador necesita acceso a Internet.
 - Los valores de altitud usan una presion de referencia fija de 1013.25 hPa.
