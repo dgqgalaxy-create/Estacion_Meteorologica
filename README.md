@@ -231,7 +231,7 @@ que se cargo en el ESP32; no es la fecha de la ultima consulta a GitHub.
 
 El ESP32 no puede actualizarse por si mismo si nunca ha recibido un firmware
 con esta logica OTA. Por eso, cada dispositivo debe recibir una primera carga
-por USB con la version actual del proyecto (`1.1.2`), incluyendo su
+por USB con la version actual del proyecto (`1.1.3`), incluyendo su
 `include/config.h` local. Despues de esa carga, las siguientes versiones se
 pueden distribuir mediante GitHub Releases sin volver a conectar el USB.
 

@@ -969,6 +969,11 @@ void comprobarActualizacionFirmware() {
 void setup() {
   Serial.begin(115200);
   registrarEvento("Arranque - firmware " + String(firmwareVersion) + " (" + String(firmwareBuildDate) + ")");
+  String fasePrevia = obtenerFaseOta();
+  if (fasePrevia.length() > 0 && fasePrevia != "ok") {
+    registrarEvento("Ultima fase OTA: " + fasePrevia);
+    Serial.println("Ultima fase OTA: " + fasePrevia);
+  }
   Wire.begin(21, 22); 
   if (!aht.begin()) Serial.println("Fallo AHT20");
   if (!bmp.begin(0x76) && !bmp.begin(0x77)) Serial.println("Fallo BMP280");
