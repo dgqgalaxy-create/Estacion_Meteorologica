@@ -370,17 +370,19 @@ void encolarLectura(float t, float h, float p) {
   }
 }
 
-// Envía UNA lectura a Google Sheets; true si el servidor respondió 2xx/3xx.
+// Envía UNA lectura a Google Sheets y devuelve el código HTTP (negativo =
+// error de transporte; p. ej. -1 sin conexión, -11 timeout). Se considera
+// éxito 2xx/3xx.
 // IMPORTANTE: Apps Script responde siempre 302 y NO hay que seguir la
 // redirección (eso añade un segundo salto TLS a otro host que en redes
 // débiles se cuelga y bloquea el bucle). El 302 confirma que doPost se
-// ejecutó, así que cualquier 2xx/3xx cuenta como éxito.
-bool enviarLecturaHttp(float t, float h, float p) {
-  if (WiFi.status() != WL_CONNECTED) return false;
+// ejecutó.
+int enviarLecturaHttp(float t, float h, float p) {
+  if (WiFi.status() != WL_CONNECTED) return -1;
   String url = obtenerSheetsUrl();
-  if (url.length() < 15) return false;
+  if (url.length() < 15) return -1;
   HTTPClient http;
-  if (!http.begin(url)) return false;
+  if (!http.begin(url)) return -1;
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
   http.setTimeout(8000);
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
@@ -388,11 +390,7 @@ bool enviarLecturaHttp(float t, float h, float p) {
   String postData = "temp=" + String(t, 1) + "&hum=" + String(h, 1) + "&pres=" + String(p, 1);
   int codigo = http.POST(postData);
   http.end();
-  if (codigo >= 200 && codigo < 400) {
-    return true;
-  }
-  Serial.printf("Envio fallido (HTTP %d)\n", codigo);
-  return false;
+  return codigo;
 }
 
 // Reenvía hasta maxPorVez lecturas pendientes (la más antigua primero).
@@ -413,15 +411,18 @@ void drenarCola(int maxPorVez) {
   f.close();
 
   int enviadas = 0;
+  int ultimoCodigo = 0;
   for (int i = 0; i < n && enviadas < maxPorVez; i++) {
     float t, h, p;
     if (sscanf(lineas[i].c_str(), "%f,%f,%f", &t, &h, &p) == 3) {
-      if (enviarLecturaHttp(t, h, p)) {
+      ultimoCodigo = enviarLecturaHttp(t, h, p);
+      if (ultimoCodigo >= 200 && ultimoCodigo < 400) {
         enviadas++;
         colaPendiente--;
       } else {
         break; // si falla una, esperar al siguiente ciclo
       }
+      esp_task_wdt_reset(); // el bucle queda bloqueado durante los POSTs
     }
   }
   if (enviadas > 0) {
@@ -432,6 +433,8 @@ void drenarCola(int maxPorVez) {
     }
     registrarEvento("Cola: " + String(enviadas) + " lecturas reenviadas (" +
                     String(colaPendiente) + " pendientes)");
+  } else if (ultimoCodigo != 0) {
+    registrarEvento("Cola: envio bloqueado (HTTP " + String(ultimoCodigo) + ")");
   }
 }
 
@@ -443,7 +446,8 @@ void intentarEnvio() {
   estadoSheetsWeb = "Enviando...";
   ledSensor.encender();
 
-  bool ok = enviarLecturaHttp(envioTemp, envioHum, envioPres);
+  int codigo = enviarLecturaHttp(envioTemp, envioHum, envioPres);
+  bool ok = (codigo >= 200 && codigo < 400);
   ledSensor.apagar();
 
   if (ok) {
@@ -457,7 +461,7 @@ void intentarEnvio() {
     intentosRealizados = 0;
   } else {
     if (!envioFallando) {
-      registrarEvento("Sheets: fallo de envio");
+      registrarEvento("Sheets: fallo de envio (HTTP " + String(codigo) + ")");
       envioFallando = true;
     }
     intentosRealizados++;
