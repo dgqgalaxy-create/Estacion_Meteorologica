@@ -34,6 +34,27 @@ Apps Script.
 El BMP280 se busca primero en la direccion I2C `0x76` y despues en `0x77`.
 El AHT20 debe estar conectado al mismo bus I2C.
 
+## Estados de los LEDs
+
+Los LEDs se controlan con logica activa: encendido significa nivel HIGH en el
+GPIO correspondiente. El parpadeo no bloquea el funcionamiento del equipo.
+
+| LED | GPIO | Estado | Interpretacion |
+| --- | ---: | --- | --- |
+| WiFi | 12 | Parpadeo lento, cambio cada 2 s | Conectado a la red WiFi |
+| WiFi | 12 | Parpadeo rapido, cambio cada 100 ms | WiFi desconectado o intentando reconectar |
+| WiFi, sensor y error | 12, 14, 27 | Los tres parpadean cada 200 ms durante 3 ciclos | El ESP32 esta entrando en el portal de configuracion WiFi |
+| WiFi | 12 | Encendido fijo despues de la secuencia anterior | Portal `Estacion-Clima-Config` activo |
+| Sensor/envio | 14 | Encendido fijo durante una peticion | Envio de datos a Google Sheets en curso |
+| Sensor/envio | 14 | Apagado | No hay un envio activo |
+| Error | 27 | Parpadeo rapido, cambio cada 100 ms | Lectura invalida o fallo temporal de un sensor |
+| Error | 27 | Parpadeo, cambio cada 200 ms | Se agotaron los reintentos de envio a Google Sheets |
+| Error | 27 | Apagado | Lectura valida y ultimo envio correcto, o no hay error activo |
+
+Durante un fallo temporal de sensor, si existe una lectura valida anterior, el
+panel muestra `Sensor recuperando` y conserva ese ultimo valor mientras el LED
+de error parpadea. Al recuperar una lectura correcta, el LED de error se apaga.
+
 ## Requisitos
 
 - ESP32 compatible con la definicion `esp32dev`.
