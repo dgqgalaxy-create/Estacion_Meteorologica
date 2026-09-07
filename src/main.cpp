@@ -21,7 +21,7 @@
 #include "WebHandler.h" 
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "1.0.5"
+#define FIRMWARE_VERSION "1.0.6"
 #endif
 
 const char* firmwareVersion = FIRMWARE_VERSION;
@@ -330,10 +330,15 @@ void configurarOTA() {
 }
 
 String extraerJsonString(const String& json, const String& key, int desde = 0) {
-  String marker = "\"" + key + "\":\"";
+  String marker = "\"" + key + "\"";
   int inicio = json.indexOf(marker, desde);
   if (inicio < 0) return "";
-  inicio += marker.length();
+  inicio = json.indexOf(':', inicio + marker.length());
+  if (inicio < 0) return "";
+  inicio++;
+  while (inicio < json.length() && isspace(json[inicio])) inicio++;
+  if (inicio >= json.length() || json[inicio] != '"') return "";
+  inicio++;
   int fin = json.indexOf('"', inicio);
   if (fin < 0) return "";
   return json.substring(inicio, fin);
@@ -396,18 +401,20 @@ void comprobarActualizacionFirmware() {
   http.end();
 
   String versionRemota = extraerJsonString(respuesta, "tag_name");
-  int firmwareAsset = respuesta.indexOf("\"name\":\"firmware.bin\"");
-  String urlFirmware = extraerJsonString(respuesta, "browser_download_url", firmwareAsset);
-  if (versionRemota.isEmpty() || urlFirmware.isEmpty()) {
-    Serial.println("Release sin tag o firmware.bin");
+  if (versionRemota.isEmpty()) {
+    Serial.println("Release sin tag de version");
     return;
   }
+  String urlFirmware =
+      "https://github.com/dgqgalaxy-create/Estacion_Meteorologica/releases/download/" +
+      versionRemota + "/firmware.bin";
 
   Serial.printf("Firmware local: %s, remoto: %s\n", firmwareVersion, versionRemota.c_str());
   if (!versionNueva(versionRemota)) return;
 
   Serial.printf("Actualizando a %s...\n", versionRemota.c_str());
   estadoFirmwareWeb = "Actualizando...";
+  httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
   httpUpdate.onStart([]() {
     mostrarBaileActualizacion(0, 1);
   });
