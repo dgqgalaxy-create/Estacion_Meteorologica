@@ -21,7 +21,7 @@
 #include "WebHandler.h" 
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "1.0.4"
+#define FIRMWARE_VERSION "1.0.5"
 #endif
 
 const char* firmwareVersion = FIRMWARE_VERSION;
@@ -426,7 +426,7 @@ void comprobarActualizacionFirmware() {
   if (resultado == HTTP_UPDATE_FAILED) {
     Serial.printf("Fallo OTA: %s\n", httpUpdate.getLastErrorString().c_str());
     estadoFirmwareWeb = "Error OTA";
-    ledWifi.pulsar(1000, 10);
+    ledWifi.pulsar(2000, 10);
     ledSensor.apagar();
     ledError.parpadear(200);
   }
@@ -456,7 +456,7 @@ void setup() {
   WiFi.setAutoReconnect(true);
 
   if (WiFi.status() == WL_CONNECTED) {
-    ledWifi.pulsar(1000, 10);
+    ledWifi.pulsar(2000, 10);
     estadoWifiWeb = "Conectado";
   } else {
     ledWifi.parpadear(100);
@@ -473,7 +473,7 @@ void setup() {
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
     Serial.println("WiFi conectado. IP: " + WiFi.localIP().toString());
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    ledWifi.pulsar(1000, 10);
+    ledWifi.pulsar(2000, 10);
     estadoWifiWeb = "Conectado";
   }, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
 
