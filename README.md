@@ -5,6 +5,22 @@ calcula indicadores meteorologicos y publica los datos en una interfaz web
 local. Tambien puede enviar cada lectura a Google Sheets mediante un Google
 Apps Script.
 
+## Guia rapida (primer arranque)
+
+1. Clona el repositorio y abre la carpeta con PlatformIO (VS Code).
+2. Crea `include/config.h` (instrucciones en [Instalacion](#instalacion)) con
+   la URL de tu Google Apps Script y las credenciales de acceso.
+3. Conecta el ESP32 por USB, averigua el puerto con `pio device list` y ponlo
+   en `upload_port` del entorno `[env:usb]` de `platformio.ini`.
+4. Carga el firmware por cable: `pio run -e usb -t upload`.
+5. Conecta un celular o PC a la red WiFi `Estacion-Clima-Config` y completa el
+   portal para guardar tu red WiFi.
+6. Abre `http://estacion-clima.local/` (o la IP que muestra el monitor serie).
+   Entra con el usuario y contrasena de `include/config.h`
+   (`admin` / `04330` por defecto).
+7. Desde el panel ajusta el intervalo de envio (en segundos) y la zona horaria.
+8. Futuras actualizaciones por WiFi: `pio run -t upload`.
+
 ## Caracteristicas
 
 - Lectura de un sensor AHT20 (temperatura y humedad).
@@ -84,7 +100,9 @@ de error parpadea. Al recuperar una lectura correcta, el LED de error se apaga.
    cd Estacion_Meteorologica
    ```
 
-2. Crea `include/config.h`. Este archivo esta excluido de Git porque contiene
+2. Crea `include/config.h`. En VS Code: clic derecho sobre la carpeta
+   `include` > `New File` y escribele `config.h` como nombre; en terminal:
+   `touch include/config.h`. Este archivo esta excluido de Git porque contiene
    la URL privada del Google Apps Script y las credenciales de acceso:
 
    ```cpp
@@ -115,8 +133,15 @@ de error parpadea. Al recuperar una lectura correcta, el LED de error se apaga.
    pio run
    ```
 
-4. Conecta el ESP32 por USB, ajusta el `upload_port` del entorno `[env:usb]`
-   en `platformio.ini` y realiza la primera carga por cable:
+4. Conecta el ESP32 por USB. Averigua el nombre del puerto con:
+
+   ```bash
+   pio device list
+   ```
+
+   (Ejemplos tipicos: `/dev/ttyUSB0` en Linux, `/dev/cu.usbserial-*` en macOS,
+   `COM3` en Windows). Ponlo en `upload_port` del entorno `[env:usb]` de
+   `platformio.ini` y realiza la primera carga por cable:
 
    ```bash
    pio run -e usb -t upload
@@ -153,6 +178,9 @@ http://estacion-clima.local/
 
 El nombre mDNS puede no funcionar en algunas redes; en ese caso usa la IP
 local del ESP32.
+
+Al abrir el panel, el navegador pedira usuario y contrasena: son los definidos
+en `include/config.h` (`admin` / `04330` por defecto).
 
 Desde el panel puedes:
 
@@ -194,10 +222,10 @@ son:
 temp=25.4&hum=58.2&pres=1013.6
 ```
 
-El Apps Script debe estar desplegado como aplicacion web y aceptar solicitudes
-anonimas si el dispositivo no dispone de autenticacion. La aplicacion sigue
-hasta seis intentos cuando un envio falla; despues marca el estado como error
-y permite reintentarlo desde el panel.
+El Apps Script debe estar desplegado como aplicacion web con acceso
+"Any user" (cualquier usuario), porque el ESP32 no envia credenciales de Google.
+La aplicacion sigue hasta seis intentos cuando un envio falla; despues marca el
+estado como error y permite reintentarlo desde el panel.
 
 La URL del Apps Script se guarda en NVS y se puede cambiar desde el panel
 (`/setsheetsurl`); `include/config.h` solo se usa como valor inicial en el
@@ -231,6 +259,9 @@ no resuelve, usa la IP local del ESP32:
 ```bash
 pio run -t upload --upload-port 192.168.1.45
 ```
+
+Nota: el firmware anterior a esta version no conoce la contrasena OTA, asi que
+esa primera carga siempre debe hacerse por cable USB.
 
 ### Por cable USB
 
