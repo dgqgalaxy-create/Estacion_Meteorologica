@@ -189,6 +189,18 @@ repositorio. Si encuentra un tag semantico mayor que su version instalada,
 descarga el asset `firmware.bin`, lo instala y reinicia. La primera consulta se
 realiza aproximadamente un minuto despues del arranque.
 
+El panel muestra la version instalada y la fecha/hora de compilacion de ese
+firmware como **Ultima actualizacion**. Esta fecha corresponde a la compilacion
+que se cargo en el ESP32; no es la fecha de la ultima consulta a GitHub.
+
+### Primera instalacion de esta funcion
+
+El ESP32 no puede actualizarse por si mismo si nunca ha recibido un firmware
+con esta logica OTA. Por eso, cada dispositivo debe recibir una primera carga
+por USB con la version actual del proyecto (`1.0.0`), incluyendo su
+`include/config.h` local. Despues de esa carga, las siguientes versiones se
+pueden distribuir mediante GitHub Releases sin volver a conectar el USB.
+
 Para publicar una version automatica:
 
 1. Cambia `firmwareVersion` en `src/main.cpp` y la version

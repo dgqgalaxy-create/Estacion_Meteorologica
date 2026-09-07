@@ -354,6 +354,14 @@ const char index_html[] PROGMEM = R"rawliteral(
                 <span class="status-dot dot-ok" id="dotSheets"></span>
                 <span>Google Sheets: <strong id="sheetsStatus">%ESTADO_SHEETS%</strong></span>
             </div>
+            <div class="status-indicator">
+                <span class="status-dot dot-ok"></span>
+                <span>Firmware: <strong id="firmwareVersion">%FIRMWARE_VERSION%</strong></span>
+            </div>
+            <div class="status-indicator">
+                <span class="status-dot dot-ok"></span>
+                <span>Ultima actualizacion: <strong id="firmwareDate">%FIRMWARE_DATE%</strong></span>
+            </div>
         </div>
 
         <!-- Grafico de Historial Continuo -->
@@ -508,6 +516,8 @@ const char index_html[] PROGMEM = R"rawliteral(
                 document.getElementById('ipWeb').textContent = d.ip;
                 document.getElementById('rssiWeb').textContent = d.rssi;
                 document.getElementById('estadoBadge').textContent = d.estado;
+                document.getElementById('firmwareVersion').textContent = d.version;
+                document.getElementById('firmwareDate').textContent = d.actualizado;
                 
                 const dotWifi = document.getElementById('dotWifi');
                 const dotSensor = document.getElementById('dotSensor');

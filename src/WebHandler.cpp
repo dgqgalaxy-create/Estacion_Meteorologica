@@ -29,6 +29,8 @@ extern float humHistory[4][25];
 extern String estadoWifiWeb;
 extern String estadoSensorWeb;
 extern String estadoSheetsWeb;
+extern const char* firmwareVersion;
+extern const char* firmwareBuildDate;
 
 // Plantilla HTML reutilizable (cargada una sola vez)
 String htmlTemplate;
@@ -67,6 +69,8 @@ void handleRoot() {
     html.replace("%IP%", WiFi.localIP().toString());
     html.replace("%RSSI%", String(WiFi.RSSI()));
     html.replace("%TIEMPO%", obtenerHora());
+    html.replace("%FIRMWARE_VERSION%", firmwareVersion);
+    html.replace("%FIRMWARE_DATE%", firmwareBuildDate);
 
     html.replace("%ESTADO_WIFI%", estadoWifiWeb);
     html.replace("%ESTADO_SENSOR%", estadoSensorWeb);
@@ -141,6 +145,8 @@ void handleCurrentJson() {
   json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
   json += "\"intervalo\":" + String(intervaloEnvio / 1000) + ",";
   json += "\"estado\":\"" + String(sendToSheetsEnabled ? "ACTIVADO" : "PAUSADO") + "\"";
+  json += ",\"version\":\"" + String(firmwareVersion) + "\"";
+  json += ",\"actualizado\":\"" + String(firmwareBuildDate) + "\"";
   json += "}";
   server.send(200, "application/json", json);
 }

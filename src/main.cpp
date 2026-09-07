@@ -25,6 +25,7 @@
 #endif
 
 const char* firmwareVersion = FIRMWARE_VERSION;
+const char* firmwareBuildDate = __DATE__ " " __TIME__;
 const char* firmwareReleaseApi =
     "https://api.github.com/repos/dgqgalaxy-create/Estacion_Meteorologica/releases/latest";
 const unsigned long firmwareCheckInterval = 6UL * 60UL * 60UL * 1000UL;
