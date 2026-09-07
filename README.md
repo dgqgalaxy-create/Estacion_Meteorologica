@@ -10,14 +10,21 @@ Apps Script.
 - Lectura de un sensor AHT20 (temperatura y humedad).
 - Lectura de un BMP280 (presion y altitud estimada).
 - Calculo de sensacion termica y punto de rocio.
+- Tendencia de presion (subiendo/estable/bajando en hPa/h).
+- Alertas configurables por umbrales de temperatura y humedad (persistidas en NVS).
 - Historial de hasta cuatro dias y registros maximos/minimos en memoria.
-- Panel web responsive servido directamente por el ESP32.
+- Cola offline: si no hay WiFi o el envio falla, las lecturas se guardan en
+  LittleFS y se reenvian a Google Sheets al reconectar.
+- Panel web responsive servido directamente por el ESP32, con pagina de
+  diagnostico (RAM, reinicios, motivo de reset, log de eventos).
 - Actualizacion automatica del panel mediante `/api/current` y `/data.json`.
 - Configuracion WiFi con WiFiManager.
-- Intervalo de envio configurable entre 5 y 3600 segundos.
+- Intervalo de lectura/envio configurable entre 5 y 3600 segundos.
 - Envio con reintentos a Google Sheets.
-- Actualizacion de firmware por OTA con el nombre `estacion-clima`.
-- Persistencia del intervalo de envio en la memoria NVS del ESP32.
+- Auto-OTA desde GitHub Releases con verificacion SHA-256 del binario y
+  rollback automatico si el firmware nuevo no arranca.
+- Actualizacion de firmware por OTA clasica con el nombre `estacion-clima`.
+- Persistencia en NVS del intervalo de envio y de los umbrales de alerta.
 
 ## Hardware y conexiones
 
@@ -136,14 +143,16 @@ local del ESP32.
 
 Desde el panel puedes:
 
-- Ver temperatura, humedad, presion, altitud, sensacion termica y punto de
-  rocio.
+- Ver temperatura, humedad, presion, altitud, sensacion termica, punto de
+  rocio y tendencia de presion.
 - Consultar maximos y minimos del dia.
 - Activar o pausar el envio a Google Sheets.
+- Configurar umbrales de alerta de temperatura y humedad.
 - Consultar por separado el estado de Google Sheets y de las actualizaciones OTA.
 - Cambiar el intervalo de lectura/envio entre 5 y 3600 segundos.
 - Forzar un reintento del ultimo envio.
 - Buscar manualmente nuevas versiones del firmware.
+- Ver una pagina de diagnostico (RAM, motivo de reinicio, WiFi, log de eventos).
 - Borrar las credenciales WiFi.
 
 ### Endpoints
@@ -151,10 +160,12 @@ Desde el panel puedes:
 | Ruta | Funcion |
 | --- | --- |
 | `/` | Panel web principal |
-| `/api/current` | Lectura actual y estados en JSON |
+| `/api/current` | Lectura actual, tendencia, alertas y estados en JSON |
+| `/api/diag` | Diagnostico (RAM, reset, WiFi, log de eventos) en JSON |
 | `/data.json` | Historial de temperatura y humedad |
 | `/toggle` | Activa o pausa el envio |
 | `/setinterval?segundos=30` | Guarda un nuevo intervalo |
+| `/setalerts?...` | Guarda umbrales de alerta (`on`, `tmax`, `tmin`, `hmax`, `hmin`) |
 | `/retry` | Reintenta el ultimo envio |
 | `/checkupdate` | Consulta inmediatamente una nueva version del firmware |
 | `/resetwifi` | Borra la configuracion WiFi y reinicia |
@@ -174,6 +185,12 @@ anonimas si el dispositivo no dispone de autenticacion. La aplicacion sigue
 hasta seis intentos cuando un envio falla; despues marca el estado como error
 y permite reintentarlo desde el panel.
 
+Si el WiFi esta caido o un envio agota sus reintentos, la lectura se guarda en
+una cola offline (`/cola.csv` en LittleFS, hasta 200 lecturas) y se reenvia
+automaticamente (5 por ciclo de 15 s) cuando hay conexion y el envio esta
+activado. El numero de lecturas pendientes se muestra en `/api/current` y en
+la pagina de diagnostico.
+
 ## Actualizaciones OTA
 
 El proyecto admite dos mecanismos OTA. Despues de la primera carga por USB, el
@@ -190,8 +207,15 @@ disponible.
 
 Ademas, cada seis horas el ESP32 consulta la ultima GitHub Release publica del
 repositorio. Si encuentra un tag semantico mayor que su version instalada,
-descarga el asset `firmware.bin`, lo instala y reinicia. La primera consulta se
-realiza aproximadamente un minuto despues del arranque.
+descarga el asset `firmware.bin`, verifica su SHA-256 contra el que publica la
+API de GitHub, lo instala en la particion OTA alternativa y reinicia. Si el
+hash no coincide, el binario se descarta y el firmware actual no se toca. La
+primera consulta se realiza aproximadamente un minuto despues del arranque.
+
+Tras instalar un OTA, el nuevo firmware se marca como "pendiente de
+confirmar": si arranca 3 veces sin confirmarse sano (WiFi conectado, sensores
+OK durante 90 s), el dispositivo vuelve automaticamente a la version anterior
+con `Update.rollBack()`.
 
 El panel muestra la version instalada y la fecha/hora de compilacion de ese
 firmware como **Ultima actualizacion**. Esta fecha corresponde a la compilacion
@@ -201,7 +225,7 @@ que se cargo en el ESP32; no es la fecha de la ultima consulta a GitHub.
 
 El ESP32 no puede actualizarse por si mismo si nunca ha recibido un firmware
 con esta logica OTA. Por eso, cada dispositivo debe recibir una primera carga
-por USB con la version actual del proyecto (`1.0.8`), incluyendo su
+por USB con la version actual del proyecto (`1.1.0`), incluyendo su
 `include/config.h` local. Despues de esa carga, las siguientes versiones se
 pueden distribuir mediante GitHub Releases sin volver a conectar el USB.
 
@@ -259,7 +283,8 @@ registros, y comienza el envio a Google Sheets. Las lecturas validas se
 conservan como respaldo si un sensor falla temporalmente.
 
 El historial y los maximos/minimos viven en memoria RAM y se reinician al
-reiniciar el ESP32. El intervalo de envio es el unico ajuste persistente.
+reiniciar el ESP32. Persisten en NVS el intervalo de envio y los umbrales de
+alerta; en LittleFS persiste la cola de lecturas pendientes de Google Sheets.
 
 ## Seguridad y notas
 

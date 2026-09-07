@@ -13,6 +13,8 @@
 #include <ArduinoOTA.h>
 #include <esp_task_wdt.h>
 #include <LittleFS.h>
+#include <Update.h>
+#include <mbedtls/sha256.h>
 #include "time.h" 
 #include <WiFiManager.h>
 #include <math.h>
@@ -89,6 +91,7 @@ String estadoSensorWeb = "OK";
 String estadoSheetsWeb = "OK";
 String estadoFirmwareWeb = "Actualizado";
 bool otaEnProgreso = false; // Evita lanzar dos OTA simultáneas
+bool otaNuevaPendiente = false; // True tras instalar un OTA, hasta arranque sano
 
 // --- LOG DE EVENTOS EN RAM (últimos eventos para diagnóstico web) ---
 const int LOG_EVENTOS_MAX = 20;
@@ -177,6 +180,15 @@ String obtenerHora() {
   char timeStringBuff[50];
   strftime(timeStringBuff, sizeof(timeStringBuff), "%H:%M:%S", &timeinfo);
   return String(timeStringBuff);
+}
+
+String obtenerFecha() {
+  struct tm timeinfo;
+  if (!tiempoSincronizado()) return "--/--/----";
+  getLocalTime(&timeinfo);
+  char buf[16];
+  strftime(buf, sizeof(buf), "%d/%m/%Y", &timeinfo);
+  return String(buf);
 }
 
 void registrarEvento(const String& e) {
@@ -625,62 +637,210 @@ void mostrarBaileActualizacion(unsigned int progreso, unsigned int total) {
   }
 }
 
-// --- DESCARGA E INSTALACIÓN OTA (bloqueante, con watchdog controlado) ---
-t_httpUpdate_return descargarYActualizarFirmware(const String& urlFirmware) {
+// --- GESTIÓN POST-OTA (marcar pendiente y rollback si el nuevo firmware no arranca) ---
+// Antes de reiniciar tras un OTA se marca "pendiente". El nuevo firmware, al
+// arrancar, incrementa un contador; si llega a 3 reinicios sin confirmarse
+// sano, se vuelve a la partición anterior con Update.rollBack().
+void marcarOtaPendiente() {
+  preferences.begin("ota", false);
+  preferences.putBool("pend", true);
+  preferences.putUChar("bcount", 0);
+  preferences.end();
+}
+
+void gestionarArranquePostOta() {
+  preferences.begin("ota", true);
+  bool pend = preferences.getBool("pend", false);
+  if (!pend) {
+    preferences.end();
+    otaNuevaPendiente = false;
+    return;
+  }
+  uint8_t cont = preferences.getUChar("bcount", 0) + 1;
+  preferences.end();
+
+  preferences.begin("ota", false);
+  preferences.putUChar("bcount", cont);
+  preferences.end();
+
+  otaNuevaPendiente = true;
+  Serial.printf("Arranque post-OTA (%u).\n", cont);
+  if (cont >= 3) {
+    registrarEvento("Post-OTA: 3 arranques sin confirmar, volviendo a la version anterior");
+    Serial.println("Post-OTA: aplicando rollback...");
+    bool ok = Update.rollBack();
+    preferences.begin("ota", false);
+    preferences.remove("pend");
+    preferences.end();
+    if (ok) {
+      delay(500);
+      ESP.restart();
+    }
+  }
+}
+
+void limpiarOtaPendiente() {
+  if (!otaNuevaPendiente) return;
+  if (millis() > 90000 && WiFi.status() == WL_CONNECTED && estadoSensorWeb == "OK") {
+    preferences.begin("ota", false);
+    preferences.remove("pend");
+    preferences.end();
+    otaNuevaPendiente = false;
+    registrarEvento("Post-OTA: firmware nuevo confirmado estable");
+    Serial.println("Post-OTA: firmware confirmado estable");
+  }
+}
+
+// SHA-256 del asset firmware.bin según la API de GitHub (campo "digest").
+// Tolera espacios tras los ':' del JSON (GitHub los incluye).
+String extraerSha256Asset(const String& json) {
+  String assetKey = "\"name\":";
+  int assetPos = -1;
+  int desde = 0;
+  while (true) {
+    assetPos = json.indexOf(assetKey, desde);
+    if (assetPos < 0) return "";
+    int p = assetPos + assetKey.length();
+    while (p < json.length() && isspace(json[p])) p++;
+    if (json.substring(p, p + 14) == "\"firmware.bin\"") break;
+    desde = assetPos + 1;
+  }
+
+  String digestKey = "\"digest\":";
+  int inicio = json.indexOf(digestKey, assetPos);
+  if (inicio < 0) return "";
+  int q = inicio + digestKey.length();
+  while (q < json.length() && isspace(json[q])) q++;
+  if (json.substring(q, q + 8) != "\"sha256:") return "";
+  q += 8;
+  int fin = json.indexOf('"', q);
+  if (fin < 0) return "";
+  return json.substring(q, fin); // 64 caracteres hex
+}
+
+// --- DESCARGA E INSTALACIÓN OTA (bloqueante, con verificación SHA-256) ---
+// Descarga el binario, calcula su SHA-256 mientras lo escribe en la partición
+// OTA alternativa y solo la activa si el hash coincide con el publicado por
+// GitHub. El watchdog de tarea se retira durante el proceso (en redes lentas
+// superaría los 30 s y reiniciaría a mitad de escritura).
+void descargarYActualizarFirmware(const String& urlFirmware, const String& sha256Esperado) {
+  registrarEvento("OTA: descarga iniciada");
   Serial.printf("Actualizando a: %s\n", urlFirmware.c_str());
 
-  httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-  httpUpdate.onStart([]() {
-    Serial.println("OTA: descarga iniciada");
-    registrarEvento("OTA: descarga iniciada");
-    mostrarBaileActualizacion(0, 1);
-  });
-  httpUpdate.onProgress([](int progreso, int total) {
-    mostrarBaileActualizacion(progreso, total);
-    // Si el watchdog siguiera activo (delete falló), evitar el reset durante la descarga:
-    esp_task_wdt_reset();
-  });
-  httpUpdate.onEnd([]() {
-    ledWifi.apagar();
-    ledSensor.apagar();
-    ledError.apagar();
-  });
+  if (sha256Esperado.length() != 64) {
+    Serial.println("La release no expone el SHA-256 del asset; se aborta por seguridad.");
+    estadoFirmwareWeb = "Error OTA";
+    registrarEvento("OTA: release sin SHA-256");
+    ledError.parpadear(200);
+    return;
+  }
+  Serial.printf("SHA-256 esperado: %s\n", sha256Esperado.c_str());
 
-  WiFiClientSecure updateClient;
-  updateClient.setInsecure();
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(20000);
+  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+  http.useHTTP10(true);
+  http.addHeader("User-Agent", "Estacion-Meteorologica-ESP32");
 
-  // La instalación es bloqueante y en redes lentas puede superar los 30 s del watchdog.
-  // Si el WDT disparara a mitad de la escritura en flash, el ESP32 se reinicia con la
-  // partición antigua intacta y la actualización "no se instala" sin dejar ningún error
-  // visible. Por eso retiramos la tarea del watchdog durante el proceso y la restauramos
-  // si el intento no termina reiniciando el sistema.
+  if (!http.begin(client, urlFirmware)) {
+    Serial.println("No se pudo iniciar la descarga");
+    estadoFirmwareWeb = "Error OTA";
+    registrarEvento("OTA: no se pudo iniciar la descarga");
+    ledError.parpadear(200);
+    return;
+  }
+
+  int codigo = http.GET();
+  if (codigo != HTTP_CODE_OK) {
+    Serial.printf("Descarga rechazada (HTTP %d)\n", codigo);
+    estadoFirmwareWeb = "Error OTA";
+    registrarEvento("OTA: HTTP " + String(codigo) + " en la descarga");
+    http.end();
+    ledError.parpadear(200);
+    return;
+  }
+  int tam = http.getSize();
+  if (tam <= 0) {
+    Serial.println("El servidor no reporto tamano");
+    estadoFirmwareWeb = "Error OTA";
+    registrarEvento("OTA: sin Content-Length");
+    http.end();
+    ledError.parpadear(200);
+    return;
+  }
+
+  WiFiClient* tcp = http.getStreamPtr();
   esp_err_t wdtErr = esp_task_wdt_delete(NULL);
 
-  t_httpUpdate_return resultado = httpUpdate.update(updateClient, urlFirmware);
+  bool exito = false;
+  String motivo = "desconocido";
 
+  if (Update.begin(tam, U_FLASH)) {
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts_ret(&ctx, 0);
+
+    size_t escrito = 0;
+    uint8_t buf[4096];
+    while (escrito < (size_t)tam) {
+      size_t n = tcp->read(buf, sizeof(buf));
+      if (n == 0) { motivo = "descarga incompleta (corte de red)"; break; }
+      if (Update.write(buf, n) != n) { motivo = "error escribiendo en flash"; break; }
+      mbedtls_sha256_update_ret(&ctx, buf, n);
+      escrito += n;
+      mostrarBaileActualizacion(escrito, tam);
+    }
+
+    if (escrito == (size_t)tam) {
+      unsigned char hash[32];
+      mbedtls_sha256_finish_ret(&ctx, hash);
+      char hex[65];
+      for (int i = 0; i < 32; i++) sprintf(hex + 2 * i, "%02x", hash[i]);
+      hex[64] = 0;
+      Serial.printf("SHA-256 recibido: %s\n", hex);
+
+      if (strcmp(hex, sha256Esperado.c_str()) != 0) {
+        motivo = "SHA-256 no coincide";
+        registrarEvento("OTA: hash no coincide, firmware descartado");
+        Update.abort();
+      } else if (Update.end()) {
+        exito = true;
+      } else {
+        motivo = "activacion de la particion";
+        Update.abort();
+      }
+    } else {
+      Update.abort();
+    }
+    mbedtls_sha256_free(&ctx);
+  } else {
+    motivo = "sin espacio en particion OTA";
+  }
+
+  http.end();
   if (wdtErr == ESP_OK) {
     esp_task_wdt_add(NULL);
   }
 
-  switch (resultado) {
-    case HTTP_UPDATE_OK:
-      // httpUpdate ya ejecuta ESP.restart() en este caso.
-      Serial.println("OTA: instalado correctamente. Reiniciando...");
-      registrarEvento("OTA: instalado correctamente, reiniciando");
-      break;
-    case HTTP_UPDATE_FAILED:
-      Serial.printf("Fallo OTA: %s\n", httpUpdate.getLastErrorString().c_str());
-      estadoFirmwareWeb = "Error OTA";
-      registrarEvento("OTA: fallo - " + httpUpdate.getLastErrorString());
-      ledWifi.pulsar(3000, 10);
-      ledSensor.apagar();
-      ledError.parpadear(200);
-      break;
-    default:
-      Serial.printf("OTA: resultado inesperado (%d)\n", (int)resultado);
-      break;
+  if (exito) {
+    marcarOtaPendiente();
+    Serial.println("OTA: firmware verificado e instalado. Reiniciando...");
+    registrarEvento("OTA: instalado y verificado, reiniciando");
+    ledWifi.apagar();
+    ledSensor.apagar();
+    ledError.apagar();
+    delay(500);
+    ESP.restart();
+  } else {
+    Serial.printf("Fallo OTA: %s\n", motivo.c_str());
+    estadoFirmwareWeb = "Error OTA";
+    registrarEvento("OTA: fallo - " + motivo);
+    ledWifi.pulsar(3000, 10);
+    ledSensor.apagar();
+    ledError.parpadear(200);
   }
-  return resultado;
 }
 
 void comprobarActualizacionFirmware() {
@@ -739,8 +899,9 @@ void comprobarActualizacionFirmware() {
   String urlFirmware =
       "https://github.com/dgqgalaxy-create/Estacion_Meteorologica/releases/download/" +
       versionRemota + "/firmware.bin";
+  String shaEsperado = extraerSha256Asset(respuesta);
 
-  descargarYActualizarFirmware(urlFirmware);
+  descargarYActualizarFirmware(urlFirmware, shaEsperado);
   otaEnProgreso = false;
 }
 
@@ -770,6 +931,8 @@ void setup() {
   wm.setConfigPortalTimeout(180);
   if (!wm.autoConnect("Estacion-Clima-Config")) ESP.restart();
   WiFi.setAutoReconnect(true);
+
+  gestionarArranquePostOta();
 
   if (WiFi.status() == WL_CONNECTED) {
     ledWifi.pulsar(3000, 10);
@@ -835,6 +998,8 @@ void loop() {
   ledWifi.actualizar(); ledSensor.actualizar(); ledError.actualizar();
 
   procesarEstadoEnvio();
+
+  limpiarOtaPendiente();
 
   // Drenar la cola offline (hasta 5 lecturas) cada 15 s cuando hay red
   static unsigned long ultimoDrenaje = 0;

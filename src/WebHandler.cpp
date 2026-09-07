@@ -2,6 +2,7 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
+#include <esp_system.h>
 #include <math.h>
 #include "WebPage.h" 
 
@@ -44,6 +45,8 @@ extern float alertaHumMin;
 extern String alertaWeb;
 extern void guardarAlertas();
 extern int colaPendiente;
+extern String obtenerFecha();
+extern String obtenerLogEventos();
 
 // Plantilla HTML reutilizable (cargada una sola vez)
 String htmlTemplate;
@@ -218,6 +221,55 @@ void handleResetWifi() {
     ESP.restart();
 }
 
+String razonResetTexto() {
+    switch (esp_reset_reason()) {
+        case ESP_RST_POWERON: return "Encendido";
+        case ESP_RST_EXT: return "Pin de reset";
+        case ESP_RST_SW: return "Reinicio por software";
+        case ESP_RST_PANIC: return "Panico/Excepcion";
+        case ESP_RST_INT_WDT: return "Watchdog de interrupcion";
+        case ESP_RST_TASK_WDT: return "Watchdog de tarea";
+        case ESP_RST_WDT: return "Otro watchdog";
+        case ESP_RST_DEEPSLEEP: return "Deep sleep";
+        case ESP_RST_BROWNOUT: return "Brownout (voltaje)";
+        case ESP_RST_SDIO: return "SDIO";
+        default: return "Desconocido";
+    }
+}
+
+void handleDiagJson() {
+    String log = obtenerLogEventos();
+    log.replace("\n", " | ");
+
+    String json;
+    json.reserve(900);
+    json = "{";
+    json += "\"uptime\":" + String(millis() / 1000) + ",";
+    json += "\"fecha\":\"" + obtenerFecha() + "\",";
+    json += "\"hora\":\"" + obtenerHora() + "\",";
+    json += "\"heap\":" + String(ESP.getFreeHeap()) + ",";
+    json += "\"heapMin\":" + String(ESP.getMinFreeHeap()) + ",";
+    json += "\"heapMax\":" + String(ESP.getMaxAllocHeap()) + ",";
+    json += "\"reset\":\"" + razonResetTexto() + "\",";
+    json += "\"ssid\":\"" + String(WiFi.SSID()) + "\",";
+    json += "\"canal\":" + String(WiFi.channel()) + ",";
+    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+    json += "\"mac\":\"" + String(WiFi.macAddress()) + "\",";
+    json += "\"version\":\"" + String(firmwareVersion) + "\",";
+    json += "\"build\":\"" + String(firmwareBuildDate) + "\",";
+    json += "\"intervalo\":" + String(intervaloEnvio / 1000) + ",";
+    json += "\"enviar\":" + String(sendToSheetsEnabled ? 1 : 0) + ",";
+    json += "\"pendientes\":" + String(colaPendiente) + ",";
+    json += "\"sketch\":" + String(ESP.getSketchSize()) + ",";
+    json += "\"sketchLibre\":" + String(ESP.getFreeSketchSpace()) + ",";
+    json += "\"flash\":" + String(ESP.getFlashChipSize()) + ",";
+    json += "\"sdk\":\"" + String(ESP.getSdkVersion()) + "\",";
+    json += "\"cpu\":" + String(ESP.getCpuFreqMHz()) + ",";
+    json += "\"log\":\"" + log + "\"";
+    json += "}";
+    server.send(200, "application/json", json);
+}
+
 void handleNotFound() { server.send(404, "text/plain", "404: No encontrado"); }
 
 void setupWeb() {
@@ -227,6 +279,7 @@ void setupWeb() {
     server.on("/setalerts", handleSetAlerts);
     server.on("/data.json", handleDataJson);
     server.on("/api/current", handleCurrentJson);
+    server.on("/api/diag", handleDiagJson);
     server.on("/retry", handleRetry);
     server.on("/checkupdate", handleCheckUpdate);
     server.on("/resetwifi", handleResetWifi);

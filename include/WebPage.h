@@ -430,6 +430,12 @@ const char index_html[] PROGMEM = R"rawliteral(
             </div>
         </div>
 
+        <!-- Diagnostico -->
+        <div class="glass-panel">
+            <h2 class="panel-title"><i class='bx bx-chip'></i> Diagnostico</h2>
+            <pre id="diagText" style="background:rgba(0,0,0,0.05);padding:12px;border-radius:12px;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;color:var(--text-main);margin:0;font-family:'Inter',monospace;">Cargando...</pre>
+        </div>
+
     </div>
 
     <script>
@@ -573,10 +579,34 @@ const char index_html[] PROGMEM = R"rawliteral(
             }).catch(e => console.error(e));
         }
 
+        function fetchDiag() {
+            fetch('/api/diag').then(r => r.json()).then(d => {
+                const pad = (k, v) => (k + ':').padEnd(16) + v;
+                const lineas = [
+                    pad('Version', d.version + '  (' + d.build + ')'),
+                    pad('Fecha', d.fecha + ' ' + d.hora),
+                    pad('Uptime', d.uptime + ' s'),
+                    pad('RAM libre', d.heap + ' B (min ' + d.heapMin + ', max alloc ' + d.heapMax + ')'),
+                    pad('Ultimo reset', d.reset),
+                    pad('WiFi', d.ssid + ' ch ' + d.canal + ' (' + d.rssi + ' dBm)'),
+                    pad('MAC', d.mac),
+                    pad('Intervalo', d.intervalo + ' s  Enviar: ' + (d.enviar ? 'ON' : 'OFF')),
+                    pad('Cola pendiente', d.pendientes),
+                    pad('Flash', d.flash + ' B  sketch ' + d.sketch + ' / libre ' + d.sketchLibre),
+                    pad('CPU / SDK', d.cpu + ' MHz  ' + d.sdk),
+                    '',
+                    'Eventos: ' + d.log
+                ];
+                document.getElementById('diagText').textContent = lineas.join('\n');
+            }).catch(e => console.error(e));
+        }
+
         fetchData();
         fetchCurrent();
+        fetchDiag();
         setInterval(fetchData, 15000);
         setInterval(fetchCurrent, 10000);
+        setInterval(fetchDiag, 20000);
     </script>
 </body>
 </html>
