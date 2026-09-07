@@ -275,6 +275,23 @@ pio run -e usb -t upload
 El panel muestra la version instalada y la fecha/hora de compilacion de ese
 firmware como **Ultima actualizacion**.
 
+## Variante MicroPython
+
+En la carpeta [`micropython/`](micropython/README.md) hay una version del
+firmware escrita en MicroPython con las mismas funciones principales (panel
+web, sensores, Google Sheets, alertas, zona horaria, cola offline). Ambas
+variantes conviven en este repositorio y puedes usar una u otra segun lo que
+cargues en el ESP32; no se interfieren entre si.
+
+Diferencias principales:
+
+- La actualizacion por WiFi usa WebREPL (ArduinoOTA no existe en
+  MicroPython); por cable se usa `mpremote`.
+- No hay mDNS: el panel se abre con la IP del ESP32.
+- Los ajustes se guardan en `config.json` / `wifi.json` en vez de NVS.
+
+Consulta [`micropython/README.md`](micropython/README.md) para instalarla.
+
 ## Estructura del proyecto
 
 ```text
@@ -287,6 +304,12 @@ src/
   main.cpp          Sensores, WiFi, NTP, OTA y ciclo principal
   WebHandler.cpp    Rutas HTTP y respuestas JSON
 platformio.ini      Placa, framework y dependencias
+micropython/
+  boot.py           Conexion WiFi y WebREPL (OTA por WiFi)
+  main.py           Aplicacion completa en MicroPython
+  index.html        Pagina web (plantilla)
+  lib/              Drivers de los sensores (ahtx0, bmp280)
+  README.md         Instrucciones de la variante MicroPython
 ```
 
 ## Funcionamiento interno

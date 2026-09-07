@@ -26,3 +26,7 @@ Thumbs.db
 *.tmp
 *.swp
 *~
+
+# Python / MicroPython
+__pycache__/
+*.pyc
