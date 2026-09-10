@@ -64,19 +64,17 @@ float tempHistory[4][24];
 float humHistory[4][24];  
 int currentDay = -1;
 
-// --- ESTADOS PARA EL ENVÍO NO BLOQUEANTE ---
-enum EstadoEnvio {
-  ENVIO_INACTIVO,
-  ENVIO_INTENTANDO,
-  ENVIO_ESPERA_REINTENTO
+// --- ENVÍO A GOOGLE SHEETS EN TAREA APARTE ---
+// El handshake TLS de la petición HTTPS necesita varios KB de pila: hacerlo en
+// el loopTask provocaba "Stack canary watchpoint triggered" y reinicios en
+// bucle. El loop solo encola lecturas; la tarea 'envio' (12 KB de pila) hace
+// las peticiones y el reenvío de la cola offline.
+struct Lectura {
+  float t;
+  float h;
+  float p;
 };
-EstadoEnvio estadoEnvio = ENVIO_INACTIVO;
-unsigned long tiempoUltimoIntento = 0;
-int intentosRealizados = 0;
-const int maxIntentos = 6;
-const unsigned long tiempoEntreIntentos = 10000;
-
-float envioTemp, envioHum, envioPres;
+QueueHandle_t colaEnvio = NULL;
 
 // --- VARIABLES DE ESTADO PARA LA WEB ---
 String estadoWifiWeb = "Desconectado";
@@ -410,138 +408,126 @@ int enviarLecturaHttp(float t, float h, float p) {
   return codigo;
 }
 
-// Reenvía hasta maxPorVez lecturas pendientes (la más antigua primero).
-void drenarCola(int maxPorVez) {
+// Reenvía la lectura pendiente más antigua (una por ciclo; sin arrays en pila).
+void drenarUnaPendiente() {
   if (!fsListo || colaPendiente <= 0) return;
-  if (WiFi.status() != WL_CONNECTED || !sendToSheetsEnabled) return;
-  if (estadoEnvio != ENVIO_INACTIVO) return; // no interferir con un envío en curso
-
-  String lineas[COLA_MAX];
-  int n = 0;
   File f = LittleFS.open(COLA_ARCHIVO, "r");
   if (!f) return;
-  while (f.available() && n < COLA_MAX) {
-    String linea = f.readStringUntil('\n');
-    linea.trim();
-    if (linea.length() > 0) lineas[n++] = linea;
-  }
+  size_t tam = f.size();
+  if (tam == 0) { f.close(); return; }
+  char* buf = (char*)malloc(tam + 1);
+  if (!buf) { f.close(); return; }
+  size_t leido = f.readBytes(buf, tam);
   f.close();
+  buf[leido] = 0;
 
-  int enviadas = 0;
-  int ultimoCodigo = 0;
-  for (int i = 0; i < n && enviadas < maxPorVez; i++) {
-    float t, h, p;
-    if (sscanf(lineas[i].c_str(), "%f,%f,%f", &t, &h, &p) == 3) {
-      ultimoCodigo = enviarLecturaHttp(t, h, p);
-      if (ultimoCodigo >= 200 && ultimoCodigo < 400) {
-        enviadas++;
-        colaPendiente--;
-      } else {
-        break; // si falla una, esperar al siguiente ciclo
-      }
-      esp_task_wdt_reset(); // el bucle queda bloqueado durante los POSTs
+  char* nl = strchr(buf, '\n');
+  size_t lenPrimera = nl ? (size_t)(nl - buf) : leido;
+  String primera(buf, lenPrimera);
+  primera.trim();
+
+  float t, h, p;
+  bool ok = false;
+  if (sscanf(primera.c_str(), "%f,%f,%f", &t, &h, &p) == 3) {
+    estadoSheetsWeb = "Enviando...";
+    ledSensor.encender();
+    int codigo = enviarLecturaHttp(t, h, p);
+    ledSensor.apagar();
+    ok = (codigo >= 200 && codigo < 400);
+    if (!ok) {
+      estadoSheetsWeb = "Error envío";
+      ledError.parpadear(200);
+      registrarEvento("Cola: envio bloqueado (HTTP " + String(codigo) + ")");
     }
+  } else {
+    ok = true; // línea ilegible: se descarta para no bloquear la cola
   }
-  if (enviadas > 0) {
-    File fw = LittleFS.open(COLA_ARCHIVO, "w");
-    if (fw) {
-      for (int i = enviadas; i < n; i++) fw.println(lineas[i]);
-      fw.close();
-    }
-    registrarEvento("Cola: " + String(enviadas) + " lecturas reenviadas (" +
-                    String(colaPendiente) + " pendientes)");
-  } else if (ultimoCodigo != 0) {
-    registrarEvento("Cola: envio bloqueado (HTTP " + String(ultimoCodigo) + ")");
-  }
-}
-
-// --- ENVÍO A GOOGLE SHEETS (no bloqueante, método original + antídotos 24/7) ---
-void intentarEnvio() {
-  if (WiFi.status() != WL_CONNECTED || !sendToSheetsEnabled) return;
-  static bool envioFallando = false;
-
-  estadoSheetsWeb = "Enviando...";
-  ledSensor.encender();
-
-  int codigo = enviarLecturaHttp(envioTemp, envioHum, envioPres);
-  bool ok = (codigo >= 200 && codigo < 400);
-  ledSensor.apagar();
 
   if (ok) {
-    if (envioFallando) {
-      registrarEvento("Sheets: envio recuperado");
-      envioFallando = false;
+    const char* resto = nl ? (nl + 1) : (buf + leido);
+    File fw = LittleFS.open(COLA_ARCHIVO, "w");
+    if (fw) {
+      fw.write((const uint8_t*)resto, strlen(resto));
+      fw.close();
     }
-    ledError.apagar();
-    estadoSheetsWeb = "OK";
-    estadoEnvio = ENVIO_INACTIVO;
-    intentosRealizados = 0;
-  } else {
-    if (!envioFallando) {
-      registrarEvento("Sheets: fallo de envio (HTTP " + String(codigo) + ")");
-      envioFallando = true;
+    if (colaPendiente > 0) colaPendiente--;
+    if (nl) {
+      estadoSheetsWeb = "OK";
+      ledError.apagar();
+      registrarEvento("Cola: reenviada 1 (" + String(colaPendiente) + " pendientes)");
     }
-    intentosRealizados++;
-    if (intentosRealizados >= maxIntentos) {
-      ledError.parpadear(200);
-      estadoSheetsWeb = "Error envío";
-      estadoEnvio = ENVIO_INACTIVO;
-      intentosRealizados = 0;
-      // Conservar la lectura para reenviarla después (cola offline)
-      encolarLectura(envioTemp, envioHum, envioPres);
-    } else {
-      estadoSheetsWeb = "Reintentando...";
-      estadoEnvio = ENVIO_ESPERA_REINTENTO;
-      tiempoUltimoIntento = millis();
+  }
+  free(buf);
+}
+
+// Tarea dedicada a los envíos: pila propia (12 KB) para el handshake TLS.
+void tareaEnvio(void* param) {
+  Lectura lec;
+  unsigned long ultimoDrenaje = 0;
+  bool envioFallando = false;
+
+  for (;;) {
+    if (!sendToSheetsEnabled) {
+      estadoSheetsWeb = "Pausado";
+      vTaskDelay(pdMS_TO_TICKS(500));
+      continue;
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      continue;
+    }
+
+    // 1) Lectura recién tomada por el loop
+    if (colaEnvio && xQueueReceive(colaEnvio, &lec, pdMS_TO_TICKS(1000)) == pdTRUE) {
+      estadoSheetsWeb = "Enviando...";
+      ledSensor.encender();
+      int codigo = 0;
+      bool ok = false;
+      for (int intento = 0; intento < 3 && !ok; intento++) {
+        codigo = enviarLecturaHttp(lec.t, lec.h, lec.p);
+        ok = (codigo >= 200 && codigo < 400);
+        if (!ok) vTaskDelay(pdMS_TO_TICKS(3000));
+      }
+      ledSensor.apagar();
+      if (ok) {
+        if (envioFallando) {
+          registrarEvento("Sheets: envio recuperado");
+          envioFallando = false;
+        }
+        ledError.apagar();
+        estadoSheetsWeb = "OK";
+      } else {
+        if (!envioFallando) {
+          registrarEvento("Sheets: fallo de envio (HTTP " + String(codigo) + ")");
+          envioFallando = true;
+        }
+        estadoSheetsWeb = "Error envío";
+        ledError.parpadear(200);
+        encolarLectura(lec.t, lec.h, lec.p); // conservar la lectura
+      }
+      continue;
+    }
+
+    // 2) Sin lecturas nuevas: reenviar una pendiente cada 15 s
+    if (colaPendiente > 0 && millis() - ultimoDrenaje >= 15000) {
+      ultimoDrenaje = millis();
+      drenarUnaPendiente();
     }
   }
 }
 
-void iniciarEnvio(float t, float h, float p) {
-  if (estadoEnvio == ENVIO_INACTIVO && sendToSheetsEnabled) {
-    envioTemp = t;
-    envioHum = h;
-    envioPres = p;
-    intentosRealizados = 0;
-    estadoEnvio = ENVIO_INTENTANDO;
-    intentarEnvio();
+// Encola una lectura para que la tarea de envío la publique.
+void encolarParaEnvio(float t, float h, float p) {
+  if (!sendToSheetsEnabled) return;
+  Lectura lec = { t, h, p };
+  if (!colaEnvio || xQueueSend(colaEnvio, &lec, 0) != pdTRUE) {
+    encolarLectura(t, h, p); // cola en RAM llena: respaldo en LittleFS
   }
 }
 
 void reintentarEnvioAhora() {
-  if (estadoEnvio == ENVIO_INACTIVO) {
-    envioTemp = lastTemp;
-    envioHum = lastHum;
-    envioPres = lastPres;
-    intentosRealizados = 0;
-    estadoEnvio = ENVIO_INTENTANDO;
-    intentarEnvio();
-    ledError.apagar();
-    estadoSheetsWeb = "Reintentando...";
-  }
-}
-
-void procesarEstadoEnvio() {
-  if (!sendToSheetsEnabled) {
-    if (estadoEnvio != ENVIO_INACTIVO) {
-      estadoEnvio = ENVIO_INACTIVO;
-      intentosRealizados = 0;
-      ledSensor.apagar();
-      estadoSheetsWeb = "Pausado";
-    }
-    return;
-  }
-
-  switch (estadoEnvio) {
-    case ENVIO_ESPERA_REINTENTO:
-      if (millis() - tiempoUltimoIntento >= tiempoEntreIntentos) {
-        estadoEnvio = ENVIO_INTENTANDO;
-        intentarEnvio();
-      }
-      break;
-    default:
-      break;
-  }
+  encolarParaEnvio(lastTemp, lastHum, lastPres);
+  estadoSheetsWeb = "Reintentando...";
 }
 
 // --- LECTURA DE SENSORES (validación corregida para altitud) ---
@@ -582,14 +568,8 @@ void leerSensor() {
       lastPres = pressure;
       lecturaValida = true;
 
-      if (sendToSheetsEnabled) {
-        if (WiFi.status() == WL_CONNECTED) {
-          iniciarEnvio(temperature, humidity, pressure);
-        } else {
-          // Sin red: guardar la lectura para reenviarla cuando vuelva el WiFi
-          encolarLectura(temperature, humidity, pressure);
-        }
-      }
+      // La tarea de envío publica la lectura (el bucle no hace red)
+      encolarParaEnvio(temperature, humidity, pressure);
       return;
     }
     
@@ -695,6 +675,10 @@ void setup() {
   configurarOTA();
   setupWeb();
 
+  // Tarea dedicada a los envíos (pila amplia para el handshake TLS)
+  colaEnvio = xQueueCreate(8, sizeof(Lectura));
+  xTaskCreatePinnedToCore(tareaEnvio, "envio", 12288, NULL, 1, NULL, 1);
+
   esp_task_wdt_init(30, true);
   esp_task_wdt_add(NULL);
   
@@ -727,15 +711,8 @@ void loop() {
   
   ledWifi.actualizar(); ledSensor.actualizar(); ledError.actualizar();
 
-  procesarEstadoEnvio();
-
-  // Drenar la cola offline (hasta 5 lecturas) cada 15 s cuando hay red
-  static unsigned long ultimoDrenaje = 0;
-  if (millis() - ultimoDrenaje >= 15000) {
-    ultimoDrenaje = millis();
-    drenarCola(5);
-  }
-
+  // Los envíos y el reenvío de la cola los hace la tarea 'envio';
+  // aquí solo se toman lecturas al ritmo del intervalo configurado.
   static unsigned long lastSendTime = 0;
   if (millis() - lastSendTime >= intervaloEnvio) {
     lastSendTime = millis();
