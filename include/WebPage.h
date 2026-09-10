@@ -255,6 +255,22 @@ const char index_html[] PROGMEM = R"rawliteral(
             to { opacity: 1; transform: translateY(0); }
         }
 
+        /* Panel de diagnostico plegable */
+        .diag-summary {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            list-style: none;
+            outline: none;
+        }
+        .diag-summary::-webkit-details-marker { display: none; }
+        .diag-chevron {
+            font-size: 1.4rem;
+            transition: transform 0.25s ease;
+        }
+        details[open] .diag-chevron { transform: rotate(180deg); }
+
     </style>
 </head>
 <body>
@@ -436,11 +452,14 @@ const char index_html[] PROGMEM = R"rawliteral(
             </div>
         </div>
 
-        <!-- Diagnostico -->
-        <div class="glass-panel">
-            <h2 class="panel-title"><i class='bx bx-chip'></i> Diagnostico</h2>
-            <pre id="diagText" style="background:rgba(0,0,0,0.05);padding:12px;border-radius:12px;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;color:var(--text-main);margin:0;font-family:'Inter',monospace;">Cargando...</pre>
-        </div>
+        <!-- Diagnostico (plegable: clic en el titulo para mostrar/ocultar) -->
+        <details class="glass-panel" id="diagPanel">
+            <summary class="diag-summary">
+                <span class="panel-title" style="margin:0;"><i class='bx bx-chip'></i> Diagnostico</span>
+                <i class='bx bx-chevron-down diag-chevron' id="diagChevron"></i>
+            </summary>
+            <pre id="diagText" style="background:rgba(0,0,0,0.05);padding:12px;border-radius:12px;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;color:var(--text-main);margin:12px 0 0 0;font-family:'Inter',monospace;">Cargando...</pre>
+        </details>
 
     </div>
 
